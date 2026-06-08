@@ -1,0 +1,103 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# agent-voice-assistant — example configuration
+#
+# Copy to config.yaml and edit. Every value can also be set via environment
+# variable with the VOICEAGENT_ prefix and "__" between levels, e.g.:
+#   VOICEAGENT_REALTIME__HOST=10.0.0.5
+#   VOICEAGENT_LOGGING__LEVEL=DEBUG
+# Environment variables override the YAML file.
+#
+# The config file path itself is chosen with `voiceagent --config PATH`, or the
+# VA_CONFIG env var, or ./config.yaml, or /etc/voiceagent/config.yaml.
+# Validate with:  voiceagent check-config --config config.yaml
+# ─────────────────────────────────────────────────────────────────────────────
+
+device:
+  name: living-room          # used for mDNS / player name / prompt context
+  room: living room
+
+# ── speech2speech (OpenAI-Realtime) server ──────────────────────────────────
+realtime:
+  host: 127.0.0.1
+  port: 8765
+  # base_url / ws_base_url override host+port if your server is behind a path:
+  # base_url: http://10.0.0.5:8765/v1
+  # ws_base_url: ws://10.0.0.5:8765/v1
+  model: local
+  # api_key: "your-server-api-key"   # only if the s2s server sets SERVER_API_KEY
+  native_16k: false          # false = declare OpenAI-standard 24 kHz (recommended);
+                             # true  = 16 kHz native fast-path (this server only)
+  instructions: |
+    You are a far-field voice assistant running on a small device in the
+    {room}. The user speaks to you hands-free and hears your replies aloud, so
+    keep responses concise and conversational. Avoid markdown and long lists.
+  voice: null                # TTS voice id understood by the s2s server
+  server_vad: true
+  interrupt_response: true   # allow barge-in
+  follow_up_window_s: 8.0    # keep the session warm this long for follow-ups
+  connect_timeout_s: 10.0
+  reconnect_initial_backoff_s: 0.5
+  reconnect_max_backoff_s: 30.0
+
+# ── local audio ─────────────────────────────────────────────────────────────
+audio:
+  backend: pipewire          # pipewire | alsa | mock (mock = dev/CI, no hardware)
+  capture_rate: 16000        # fixed: openWakeWord + XVF3800 requirement
+  capture_frame_ms: 32       # 32 ms = 512 samples @ 16 kHz
+  capture_device: null       # null = autodetect; or a device name/index
+  playback_device: null
+  playback_rate: 24000
+  duck_level: 0.2            # music volume (0..1) during a voice turn
+  duck_fade_ms: 80
+  music_target: null         # PipeWire/Pulse node to duck (wired in Phase 7)
+
+# ── reSpeaker XVF3800 (xvf_host) ────────────────────────────────────────────
+respeaker:
+  enabled: true
+  simulate: false            # true = in-memory mock (dev/CI, no hardware)
+  xvf_host_path: xvf_host    # installer vendors the prebuilt binary
+  transport: usb             # usb | i2c
+  save_to_flash: false
+  tuning: {}                 # raw xvf_host params applied at startup, e.g.:
+                             #   AUDIO_MGR_MIC_GAIN: [10]
+                             #   PP_AGCGAIN: [1]
+
+# ── wake word (openWakeWord) ────────────────────────────────────────────────
+wakeword:
+  enabled: true
+  models: [alexa]            # openWakeWord model name(s) or path(s)
+  threshold: 0.5
+  vad_threshold: 0.5
+  cooldown_s: 2.0
+  preroll_s: 0.5
+  wake_sound: null           # path to a 16-bit PCM .wav played once on wake
+
+# ── media: sendspin player + Home Assistant / Music Assistant ───────────────
+media:
+  pause_via_ha: true         # true pause via HA; local ducking always applied
+  sendspin:
+    enabled: false
+    name: null               # defaults to device.name
+    server_url: null         # ws://...; null = mDNS auto-discovery
+    audio_device: null
+    extra_args: []
+  home_assistant:
+    enabled: false
+    base_url: null           # http://homeassistant.local:8123
+    # token: "long-lived-access-token"
+    media_player_entity: null  # e.g. media_player.living_room
+
+# ── device feedback (audio earcon + LED ring) ──────────────────────────────
+feedback:
+  error_sound: null          # path to an error earcon .wav (optional)
+  led:
+    enabled: true
+    brightness: 40
+    listen_color: [0, 255, 0]   # green while listening
+    think_color: [0, 0, 255]    # blue while awaiting the model (breath/pulse)
+    speak_color: [0, 0, 255]    # blue while speaking
+
+# ── logging ─────────────────────────────────────────────────────────────────
+logging:
+  level: INFO                # CRITICAL | ERROR | WARNING | INFO | DEBUG
+  format: console            # console | json

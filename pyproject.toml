@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "voiceagent"
+version = "0.2.0"
+description = "Headless wake-word voice assistant for ARM64 SBCs, client of an OpenAI-Realtime-compatible speech2speech server."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Eric Alborn", email = "eric.alborn@anteon.group" }]
+keywords = ["voice-assistant", "openai-realtime", "wakeword", "sbc", "respeaker"]
+
+# Phase 2 keeps the dependency surface minimal and hardware-free so the package
+# installs and CI runs on any machine. Audio/wakeword/realtime/media deps are
+# added in the phases that introduce them (see PLAN.md).
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.2",
+    "structlog>=24.1",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+# Real audio backend (on-device). Not needed for dev/CI with audio.backend: mock.
+audio = [
+    "sounddevice>=0.4",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-PyYAML>=6.0",
+]
+
+[project.scripts]
+voiceagent = "voiceagent.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/winoiknow/agent-voice-assistant"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/voiceagent"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "W", "C4", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["voiceagent"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["structlog.*", "sounddevice.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

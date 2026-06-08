@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Local config & secrets (never commit a real config)
+/config.yaml
+/config.local.yaml
+*.secret
+
+# Vendored per-arch binaries are fetched by the installer; keep the README.
+/vendor/**
+!/vendor/
+!/vendor/xvf_host/
+!/vendor/xvf_host/README.md
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local agent settings (machine-local)
+/.claude/
+
+# Internal planning/spec docs — kept local, not published
+/GOAL.md
+/ARCHITECTURE.md
+/PLAN.md

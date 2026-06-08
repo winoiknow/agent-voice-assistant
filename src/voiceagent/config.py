@@ -1,0 +1,262 @@
+"""Configuration model for the voice assistant.
+
+A single ``config.yaml`` drives the whole headless device. Every field is also
+overridable by an environment variable using the ``VOICEAGENT_`` prefix and a
+``__`` nested delimiter, e.g. ``VOICEAGENT_REALTIME__HOST=10.0.0.5`` or
+``VOICEAGENT_LOGGING__LEVEL=DEBUG``.
+
+Precedence (highest first): explicit init kwargs > environment > YAML file >
+field defaults. Secrets use ``SecretStr`` so they never appear in logs, ``repr``,
+or ``model_dump`` output.
+
+The active YAML path is chosen by :func:`load_config` (CLI ``--config`` flag, then
+the ``VA_CONFIG`` env var, then standard locations). It is intentionally *not*
+the ``VOICEAGENT_`` prefix so it can never collide with a settings field.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
+
+# Standard locations probed (in order) when no path is given explicitly.
+DEFAULT_CONFIG_LOCATIONS: tuple[Path, ...] = (
+    Path("config.yaml"),
+    Path("/etc/voiceagent/config.yaml"),
+)
+
+# Module-level handle read by ``settings_customise_sources``. Set by load_config.
+_active_config_path: Path | None = None
+
+
+class _StrictModel(BaseModel):
+    """Base for config sections: reject unknown keys so typos surface loudly."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DeviceConfig(_StrictModel):
+    """Identity of this physical device."""
+
+    name: str = "voice-assistant"
+    room: str | None = None
+
+
+class RealtimeConfig(_StrictModel):
+    """Connection to the speech2speech OpenAI-Realtime server."""
+
+    host: str = "127.0.0.1"
+    port: int = 8765
+    base_url: str | None = None  # overrides host/port for HTTP, e.g. http://h:8765/v1
+    ws_base_url: str | None = None  # overrides host/port for WS, e.g. ws://h:8765/v1
+    model: str = "local"
+    api_key: SecretStr | None = None
+
+    # Audio format on the wire. Default declares the OpenAI standard 24 kHz; the
+    # s2s server resamples to/from its internal 16 kHz pipeline. native_16k omits
+    # the format field for the zero-resample fast path (valid only against s2s).
+    native_16k: bool = False
+
+    # Sent in session.update.
+    instructions: str | None = None
+    voice: str | None = None
+    server_vad: bool = True
+    interrupt_response: bool = True
+
+    # Conversation lifecycle.
+    follow_up_window_s: float = 8.0
+
+    # Resilience.
+    connect_timeout_s: float = 10.0
+    reconnect_initial_backoff_s: float = 0.5
+    reconnect_max_backoff_s: float = 30.0
+
+
+class AudioConfig(_StrictModel):
+    """Local capture/playback and ducking.
+
+    ``backend: mock`` selects a dependency-free simulated backend for development
+    and CI on machines without the audio hardware. ``pipewire``/``alsa`` use the
+    real ``sounddevice`` backend (install the ``audio`` extra).
+    """
+
+    backend: Literal["pipewire", "alsa", "mock"] = "pipewire"
+    # Mic capture is fixed at 16 kHz: required by openWakeWord and what the
+    # XVF3800 presents. The realtime client upsamples to 24 kHz on send.
+    capture_rate: int = 16000
+    capture_frame_ms: int = Field(default=32, gt=0)  # 32 ms = 512 samples @ 16 kHz
+    capture_device: str | None = None
+    playback_device: str | None = None
+    playback_rate: int = 24000
+    # Music volume (0..1) during a voice turn, and the fade applied when ducking.
+    duck_level: float = Field(default=0.2, ge=0.0, le=1.0)
+    duck_fade_ms: int = Field(default=80, ge=0)
+    # Optional PipeWire/Pulse target (node name/id) whose volume is ducked. The
+    # concrete music stream is wired in Phase 7; unset = duck is a logged no-op.
+    music_target: str | None = None
+
+
+class RespeakerConfig(_StrictModel):
+    """reSpeaker XVF3800 control via the xvf_host binary."""
+
+    enabled: bool = True
+    # simulate selects an in-memory MockXvfHost for dev/CI without the hardware.
+    simulate: bool = False
+    xvf_host_path: str = "xvf_host"
+    transport: Literal["usb", "i2c"] = "usb"
+    # Raw xvf_host parameter name -> argument values, applied at startup.
+    # e.g. {"AUDIO_MGR_MIC_GAIN": [10], "PP_AGCGAIN": [1]}
+    tuning: dict[str, list[float]] = Field(default_factory=dict)
+    save_to_flash: bool = False
+
+
+class LedConfig(_StrictModel):
+    """LED-ring cue colors (RGB 0..255). See ARCHITECTURE.md §3.8.
+
+    Firmware effects are a fixed set (off/breath/rainbow/single/doa); chase/flash
+    patterns are an open item, so the feedback controller maps states to the
+    nearest available primitive using these colors.
+    """
+
+    enabled: bool = True
+    brightness: int = Field(default=40, ge=0, le=255)
+    listen_color: tuple[int, int, int] = (0, 255, 0)
+    think_color: tuple[int, int, int] = (0, 0, 255)
+    speak_color: tuple[int, int, int] = (0, 0, 255)
+
+
+class WakewordConfig(_StrictModel):
+    """openWakeWord detection and the wake confirmation sound."""
+
+    enabled: bool = True
+    models: list[str] = Field(default_factory=lambda: ["alexa"])
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    cooldown_s: float = Field(default=2.0, ge=0.0)
+    preroll_s: float = Field(default=0.5, ge=0.0)
+    # User-supplied wake confirmation .wav, played once on detection.
+    wake_sound: str | None = None
+
+
+class SendspinConfig(_StrictModel):
+    """Managed sendspin player sidecar (device is the player)."""
+
+    enabled: bool = False
+    name: str | None = None  # defaults to device.name when unset
+    server_url: str | None = None  # ws://...; None => mDNS auto-discovery
+    audio_device: str | None = None
+    extra_args: list[str] = Field(default_factory=list)
+
+
+class HomeAssistantConfig(_StrictModel):
+    """Home Assistant / Music Assistant control for pause/resume/announce."""
+
+    enabled: bool = False
+    base_url: str | None = None  # http://homeassistant.local:8123
+    token: SecretStr | None = None
+    media_player_entity: str | None = None  # entity for this device's player
+
+
+class MediaConfig(_StrictModel):
+    sendspin: SendspinConfig = Field(default_factory=SendspinConfig)
+    home_assistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
+    # Use HA media_player.pause for a true pause; local ducking is always applied.
+    pause_via_ha: bool = True
+
+
+class FeedbackConfig(_StrictModel):
+    error_sound: str | None = None
+    led: LedConfig = Field(default_factory=LedConfig)
+
+
+class LoggingConfig(_StrictModel):
+    level: str = "INFO"
+    format: Literal["console", "json"] = "console"
+
+    @field_validator("level")
+    @classmethod
+    def _valid_level(cls, v: str) -> str:
+        valid = {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}
+        up = v.upper()
+        if up not in valid:
+            raise ValueError(f"invalid log level {v!r}; choose one of {sorted(valid)}")
+        return up
+
+
+class Settings(BaseSettings):
+    """Top-level configuration aggregating every subsystem."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="VOICEAGENT_",
+        env_nested_delimiter="__",
+        extra="forbid",
+        case_sensitive=False,
+    )
+
+    device: DeviceConfig = Field(default_factory=DeviceConfig)
+    realtime: RealtimeConfig = Field(default_factory=RealtimeConfig)
+    audio: AudioConfig = Field(default_factory=AudioConfig)
+    respeaker: RespeakerConfig = Field(default_factory=RespeakerConfig)
+    wakeword: WakewordConfig = Field(default_factory=WakewordConfig)
+    media: MediaConfig = Field(default_factory=MediaConfig)
+    feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # init > env > yaml > defaults.
+        sources: list[PydanticBaseSettingsSource] = [init_settings, env_settings]
+        if _active_config_path is not None:
+            sources.append(
+                YamlConfigSettingsSource(settings_cls, yaml_file=_active_config_path)
+            )
+        return tuple(sources)
+
+
+def resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path | None:
+    """Resolve which config file to use: explicit arg, then VA_CONFIG, then defaults.
+
+    Returns the first existing path, or None if nothing is found (defaults only).
+    """
+    candidates: list[Path] = []
+    if path is not None:
+        candidates.append(Path(path))
+    elif env_path := os.environ.get("VA_CONFIG"):
+        candidates.append(Path(env_path))
+    else:
+        candidates.extend(DEFAULT_CONFIG_LOCATIONS)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    # An explicitly requested path that does not exist is an error the caller
+    # should see, rather than silently falling back to defaults.
+    if path is not None or os.environ.get("VA_CONFIG"):
+        raise FileNotFoundError(f"config file not found: {candidates[0]}")
+    return None
+
+
+def load_config(path: str | os.PathLike[str] | None = None) -> Settings:
+    """Load settings, layering YAML (if found) under environment overrides."""
+    global _active_config_path
+    _active_config_path = resolve_config_path(path)
+    try:
+        return Settings()
+    finally:
+        _active_config_path = None

@@ -1,0 +1,12 @@
+# Stable naming + permissions for the reSpeaker XVF3800 USB 4-mic array.
+#
+# XMOS/reSpeaker XVF3800 USB vendor:product. VERIFY against your unit with:
+#   lsusb        # find the "XMOS" / "reSpeaker" entry
+#   udevadm info -a -n /dev/bus/usb/<bus>/<dev> | grep -i idVendor
+# then adjust idVendor/idProduct below.
+#
+# Installed to /etc/udev/rules.d/ by install.sh (Phase 8). Reload with:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+SUBSYSTEM=="usb", ATTRS{idVendor}=="20b1", ATTRS{idProduct}=="4000", \
+    MODE="0666", GROUP="plugdev", SYMLINK+="respeaker-xvf3800"
