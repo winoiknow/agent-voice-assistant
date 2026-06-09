@@ -37,9 +37,11 @@ class OpenWakeWordDetector(WakeDetector):
             from openwakeword.model import Model
         except ImportError as exc:  # pragma: no cover - exercised only on-device
             raise RuntimeError(
-                "openWakeWord is required for wakeword.engine: openwakeword; install "
-                "the 'wakeword' extra (pip install '.[wakeword]') or set "
-                "wakeword.engine: mock for development"
+                "openWakeWord is required for wakeword.engine: openwakeword. Install:\n"
+                "  pip install -e '.[wakeword]' && pip install --no-deps openwakeword\n"
+                "(openWakeWord is --no-deps because it hard-requires tflite-runtime on "
+                "Linux, which has no aarch64/py3.12 wheel; we use the ONNX path.)\n"
+                "Or set wakeword.engine: mock for development."
             ) from exc
 
         if rate != 16000:
@@ -77,15 +79,16 @@ class OpenWakeWordDetector(WakeDetector):
             arr = self._np.frombuffer(chunk, dtype=self._np.int16)
             scores: dict[str, float] = self._model.predict(arr)
             best_model, best_score = max(scores.items(), key=lambda kv: kv[1], default=("", 0.0))
-            if best_score >= self.threshold:
+            score = float(best_score)  # openWakeWord returns np.float32
+            if score >= self.threshold:
                 self._cooldown = self.cooldown_samples
                 event = WakeEvent(
                     model=best_model,
-                    score=float(best_score),
+                    score=score,
                     preroll=self._preroll.snapshot(),
                     rate=self.rate,
                 )
-                log.info("wake", model=best_model, score=round(best_score, 3),
+                log.info("wake", model=best_model, score=round(score, 3),
                          preroll_ms=event.preroll_ms)
                 return event
         return None

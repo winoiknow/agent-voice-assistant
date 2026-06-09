@@ -26,8 +26,19 @@ VOICEAGENT_RESPEAKER__SIMULATE=true \
   voiceagent respeaker-tune      # apply DSP tuning and read it back
 ```
 
-On the SBC, set `audio.backend: pipewire` (install the `audio` extra:
-`pip install '.[audio]'`) and `respeaker.simulate: false`.
+On the SBC, set `audio.backend: pipewire`/`alsa` and `respeaker.simulate: false`,
+and install the on-device extras:
+
+```bash
+pip install -e ".[audio,wakeword]"
+pip install --no-deps openwakeword     # see note below
+```
+
+> **openWakeWord install note:** openWakeWord hard-requires `tflite-runtime` on
+> Linux, which has no aarch64/Python-3.12 wheel. We use its **ONNX** inference path,
+> so it's installed `--no-deps`; the `wakeword` extra provides the deps it actually
+> needs (`onnxruntime`, `numpy`, `scipy`, `scikit-learn`, `tqdm`, `requests`).
+> Models download automatically on first run.
 
 ## Quick start (development)
 
