@@ -52,12 +52,14 @@ class Orchestrator:
         wake_detector: WakeDetector,
         led: LedController,
         *,
+        media: Any = None,
         conversation_factory: ConversationFactory | None = None,
     ) -> None:
         self.settings = settings
         self.audio = audio_io
         self.wake = wake_detector
         self.led = led
+        self.media = media
         self._factory = conversation_factory or self._default_factory
         self._shutdown = asyncio.Event()
         self._state = LedState.IDLE
@@ -67,20 +69,26 @@ class Orchestrator:
 
     # ── main loop ────────────────────────────────────────────────
     async def run(self) -> None:
-        async with self.audio:
-            await self._set_state(LedState.IDLE)
-            log.info("orchestrator_ready", device=self.settings.device.name)
-            while not self._shutdown.is_set():
-                wake = await self._wait_for_wake()
-                if wake is None:
-                    break
-                try:
-                    await self._converse(wake)
-                except Exception as exc:
-                    log.error("conversation_failed", error=str(exc))
-                    await self._fail_safe()
-            await self._set_state(LedState.IDLE)
-            log.info("orchestrator_stopped")
+        if self.media is not None:
+            await self.media.start()
+        try:
+            async with self.audio:
+                await self._set_state(LedState.IDLE)
+                log.info("orchestrator_ready", device=self.settings.device.name)
+                while not self._shutdown.is_set():
+                    wake = await self._wait_for_wake()
+                    if wake is None:
+                        break
+                    try:
+                        await self._converse(wake)
+                    except Exception as exc:
+                        log.error("conversation_failed", error=str(exc))
+                        await self._fail_safe()
+                await self._set_state(LedState.IDLE)
+                log.info("orchestrator_stopped")
+        finally:
+            if self.media is not None:
+                await self.media.stop()
 
     async def _wait_for_wake(self) -> WakeEvent | None:
         log.info("idle_listening")
@@ -154,16 +162,25 @@ class Orchestrator:
     # ── feedback + lifecycle ─────────────────────────────────────
     async def _engage(self) -> None:
         await self._set_state(LedState.ENGAGING)
+        if self.media is not None:
+            with contextlib.suppress(Exception):
+                await self.media.on_turn_start()
         sound = self.settings.wakeword.wake_sound
         if sound:
             with contextlib.suppress(Exception):
                 await self.audio.play_wav(sound)
 
     async def _close(self) -> None:
+        if self.media is not None:
+            with contextlib.suppress(Exception):
+                await self.media.on_turn_end()
         await self._set_state(LedState.IDLE)
         log.info("conversation_closed")
 
     async def _fail_safe(self) -> None:
+        if self.media is not None:
+            with contextlib.suppress(Exception):
+                await self.media.on_turn_end()  # make sure music resumes
         sound = self.settings.feedback.error_sound
         if sound:
             with contextlib.suppress(Exception):

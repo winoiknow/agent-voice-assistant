@@ -16,6 +16,7 @@ from functools import partial
 from voiceagent.audio import create_audio_io
 from voiceagent.config import Settings
 from voiceagent.logging_setup import get_logger
+from voiceagent.media import MediaController
 from voiceagent.orchestrator import Orchestrator
 from voiceagent.respeaker import LedController, create_xvf_host
 from voiceagent.wakeword import create_wake_detector
@@ -39,7 +40,8 @@ class App:
         audio = create_audio_io(self.settings.audio)
         wake = create_wake_detector(self.settings.wakeword, self.settings.audio.capture_rate)
         led = LedController(create_xvf_host(self.settings.respeaker), self.settings.feedback.led)
-        return Orchestrator(self.settings, audio, wake, led)
+        media = MediaController(self.settings, audio)
+        return Orchestrator(self.settings, audio, wake, led, media=media)
 
     async def run(self) -> None:
         """Build subsystems and run the orchestrator until shutdown."""
