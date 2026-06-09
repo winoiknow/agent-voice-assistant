@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import threading
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -50,6 +51,10 @@ class SounddeviceAudioIO(AudioIO):
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=64)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stopped = asyncio.Event()
+        # Streaming playback state.
+        self._out_stream: Any = None
+        self._pb_buffer = bytearray()
+        self._pb_lock = threading.Lock()
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
@@ -124,6 +129,50 @@ class SounddeviceAudioIO(AudioIO):
                 stream.close()
 
         await asyncio.to_thread(_blocking_play)
+
+    async def play_stream_start(self, fmt: AudioFormat | None = None) -> None:
+        fmt = fmt or self.playback_format
+
+        def _callback(outdata: Any, frames: int, _time: object, status: object) -> None:
+            if status:
+                log.debug("playback_status", status=str(status))
+            need = frames * fmt.bytes_per_frame
+            with self._pb_lock:
+                have = min(need, len(self._pb_buffer))
+                if have:
+                    outdata[:have] = self._pb_buffer[:have]
+                    del self._pb_buffer[:have]
+                if have < need:
+                    outdata[have:need] = b"\x00" * (need - have)
+
+        with self._pb_lock:
+            self._pb_buffer.clear()
+        self._out_stream = self._sd.RawOutputStream(
+            samplerate=fmt.rate,
+            channels=fmt.channels,
+            dtype="int16",
+            device=self.playback_device,
+            callback=_callback,
+        )
+        self._out_stream.start()
+        log.info("playback_stream_started", rate=fmt.rate)
+
+    def play_stream_write(self, pcm: bytes) -> None:
+        with self._pb_lock:
+            self._pb_buffer.extend(pcm)
+
+    def play_stream_clear(self) -> None:
+        with self._pb_lock:
+            self._pb_buffer.clear()
+
+    async def play_stream_stop(self) -> None:
+        if self._out_stream is not None:
+            self._out_stream.stop()
+            self._out_stream.close()
+            self._out_stream = None
+        with self._pb_lock:
+            self._pb_buffer.clear()
+        log.info("playback_stream_stopped")
 
     async def set_music_gain(self, level: float) -> None:
         if not self.music_target:

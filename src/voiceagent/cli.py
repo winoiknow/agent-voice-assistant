@@ -7,6 +7,7 @@
     voiceagent led-test [STATE] [--config …]  Drive the LED ring (one state or all).
     voiceagent respeaker-tune [--config …]    Apply DSP tuning and read it back.
     voiceagent wake-test [-s SECONDS] [--config …]   Listen for the wake word.
+    voiceagent realtime-test [-s SECONDS] [--config …]   One realtime conversation.
     voiceagent --version
 
 Each command exits non-zero on a missing (2) or invalid (1) config.
@@ -31,6 +32,7 @@ from voiceagent.config import Settings, load_config, resolve_config_path
 from voiceagent.diagnostics import (
     run_audio_test,
     run_led_test,
+    run_realtime_test,
     run_respeaker_tune,
     run_wake_test,
 )
@@ -67,6 +69,11 @@ def _build_parser() -> argparse.ArgumentParser:
     wake_p = _with_config(sub.add_parser("wake-test", help="Listen for the wake word."))
     wake_p.add_argument(
         "--seconds", "-s", type=float, default=20.0, help="How long to listen."
+    )
+
+    rt_p = _with_config(sub.add_parser("realtime-test", help="One realtime conversation."))
+    rt_p.add_argument(
+        "--seconds", "-s", type=float, default=30.0, help="How long to converse."
     )
 
     return parser
@@ -145,6 +152,14 @@ def _cmd_wake_test(config_path: str | None, seconds: float) -> int:
     return 0
 
 
+def _cmd_realtime_test(config_path: str | None, seconds: float) -> int:
+    settings = _load_or_exit(config_path)
+    configure_logging(settings.logging)
+    result = asyncio.run(run_realtime_test(settings, seconds=seconds))
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -160,6 +175,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_respeaker_tune(args.config)
         if args.command == "wake-test":
             return _cmd_wake_test(args.config, args.seconds)
+        if args.command == "realtime-test":
+            return _cmd_realtime_test(args.config, args.seconds)
     except _ConfigExit as exit_:
         return exit_.code
     return 2  # unreachable: subparser is required

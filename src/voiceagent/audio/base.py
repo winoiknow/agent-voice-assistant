@@ -63,6 +63,25 @@ class AudioIO(ABC):
             data = wf.readframes(wf.getnframes())
         await self.play_pcm(data, fmt)
 
+    # ── streaming playback (TTS) ─────────────────────────────────
+    # A persistent output stream fed chunk-by-chunk, so realtime response audio
+    # plays continuously and can be cut instantly on barge-in via clear().
+    @abstractmethod
+    async def play_stream_start(self, fmt: AudioFormat | None = None) -> None:
+        """Open the streaming output. Defaults to playback_format."""
+
+    @abstractmethod
+    def play_stream_write(self, pcm: bytes) -> None:
+        """Append PCM (at the stream's format) to the playback buffer."""
+
+    @abstractmethod
+    def play_stream_clear(self) -> None:
+        """Drop any buffered playback audio immediately (barge-in)."""
+
+    @abstractmethod
+    async def play_stream_stop(self) -> None:
+        """Close the streaming output."""
+
     # ── ducking ──────────────────────────────────────────────────
     @abstractmethod
     async def set_music_gain(self, level: float) -> None:

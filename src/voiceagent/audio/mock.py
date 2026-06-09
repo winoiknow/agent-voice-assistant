@@ -65,6 +65,11 @@ class MockAudioIO(AudioIO):
         self.played: list[tuple[bytes, AudioFormat]] = []
         self.music_gain: float = 1.0
         self.music_gain_history: list[float] = []
+        # Streaming playback inspection.
+        self.stream_open = False
+        self.stream_fmt: AudioFormat | None = None
+        self.stream_written = bytearray()
+        self.stream_clears = 0
 
     async def start(self) -> None:
         self.started = True
@@ -98,6 +103,19 @@ class MockAudioIO(AudioIO):
     async def play_pcm(self, data: bytes, fmt: AudioFormat | None = None) -> None:
         self.played.append((data, fmt or self.playback_format))
         log.debug("mock_play", bytes=len(data))
+
+    async def play_stream_start(self, fmt: AudioFormat | None = None) -> None:
+        self.stream_open = True
+        self.stream_fmt = fmt or self.playback_format
+
+    def play_stream_write(self, pcm: bytes) -> None:
+        self.stream_written.extend(pcm)
+
+    def play_stream_clear(self) -> None:
+        self.stream_clears += 1
+
+    async def play_stream_stop(self) -> None:
+        self.stream_open = False
 
     async def set_music_gain(self, level: float) -> None:
         self.music_gain = level

@@ -40,12 +40,21 @@ wakeword = [
     "tqdm>=4",
     "requests>=2",
 ]
+# Realtime client to the speech2speech server. Not needed for dev/CI unit tests
+# (the session loop is tested with a fake connection); resampling needs numpy+scipy.
+realtime = [
+    "openai>=1.60",
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
     "types-PyYAML>=6.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
 ]
 
 [project.scripts]
@@ -72,7 +81,7 @@ packages = ["voiceagent"]
 mypy_path = "src"
 
 [[tool.mypy.overrides]]
-module = ["structlog.*", "sounddevice.*", "openwakeword.*", "numpy.*"]
+module = ["structlog.*", "sounddevice.*", "openwakeword.*", "numpy.*", "scipy.*", "openai.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

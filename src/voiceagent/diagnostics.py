@@ -8,10 +8,12 @@ against real hardware on the SBC, unchanged.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from voiceagent.audio import create_audio_io
 from voiceagent.config import Settings
 from voiceagent.logging_setup import get_logger
+from voiceagent.realtime import RealtimeSession
 from voiceagent.respeaker import LedController, LedState, create_xvf_host
 from voiceagent.wakeword import create_wake_detector
 
@@ -100,6 +102,55 @@ async def run_wake_test(settings: Settings, *, seconds: float = 20.0) -> dict[st
         "count": len(detections),
         "detections": detections,
     }
+
+
+async def run_realtime_test(settings: Settings, *, seconds: float = 30.0) -> dict[str, object]:
+    """Open a realtime session for ``seconds``: speak, hear the reply, barge in."""
+    io = create_audio_io(settings.audio)
+    summary: dict[str, Any] = {
+        "connected": False,
+        "user_transcripts": [],
+        "assistant_transcripts": [],
+        "audio_bytes": 0,
+        "responses": 0,
+        "barge_ins": 0,
+        "tool_calls": [],
+        "errors": [],
+    }
+
+    def on_event(ev: dict[str, Any]) -> None:
+        kind = ev["kind"]
+        if kind == "connected":
+            summary["connected"] = True
+            log.info("connected")
+        elif kind == "user_transcript" and ev.get("final"):
+            summary["user_transcripts"].append(ev["text"])
+            log.info("user", text=ev["text"])
+        elif kind == "assistant_transcript":
+            summary["assistant_transcripts"].append(ev["text"])
+            log.info("assistant", text=ev["text"])
+        elif kind == "audio":
+            summary["audio_bytes"] += ev["bytes"]
+        elif kind == "response_done":
+            summary["responses"] += 1
+        elif kind == "barge_in":
+            summary["barge_ins"] += 1
+            log.info("barge_in")
+        elif kind == "tool_call":
+            summary["tool_calls"].append({"name": ev["name"], "arguments": ev["arguments"]})
+        elif kind == "error":
+            summary["errors"].append({"type": ev["type"], "message": ev["message"]})
+
+    session = RealtimeSession(
+        settings.realtime,
+        io,
+        capture_rate=settings.audio.capture_rate,
+        playback_rate=settings.audio.playback_rate,
+        on_event=on_event,
+    )
+    async with io:
+        await session.run(duration_s=seconds)
+    return summary
 
 
 async def run_respeaker_tune(settings: Settings) -> dict[str, object]:
