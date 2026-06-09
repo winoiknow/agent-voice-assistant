@@ -45,6 +45,12 @@ audio:
   capture_rate: 16000        # fixed: openWakeWord + XVF3800 requirement
   capture_frame_ms: 32       # 32 ms = 512 samples @ 16 kHz
   capture_device: null       # null = autodetect; or a device name/index
+  # The XVF3800 exposes 2 channels: CH0 = processed (AEC+beamformed), CH1 = raw.
+  # When capturing through a source that would downmix (e.g. PulseAudio), open 2
+  # channels and keep only CH0 so the raw echo in CH1 isn't blended in. For direct
+  # ALSA hw capture (no pulse), leave capture_channels: 1.
+  capture_channels: 1
+  capture_pick_channel: 0
   playback_device: null
   playback_rate: 24000
   duck_level: 0.2            # music volume (0..1) during a voice turn

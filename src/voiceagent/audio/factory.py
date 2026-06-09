@@ -30,4 +30,6 @@ def create_audio_io(cfg: AudioConfig) -> AudioIO:
         capture_device=cfg.capture_device,
         playback_device=cfg.playback_device,
         music_target=cfg.music_target,
+        capture_channels=cfg.capture_channels,
+        capture_pick_channel=cfg.capture_pick_channel,
     )

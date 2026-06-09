@@ -108,6 +108,13 @@ class AudioConfig(_StrictModel):
     capture_rate: int = 16000
     capture_frame_ms: int = Field(default=32, gt=0)  # 32 ms = 512 samples @ 16 kHz
     capture_device: str | None = None
+    # The XVF3800 presents 2 channels: CH0 = processed (AEC + beamformed), CH1 =
+    # raw/reference. When capturing via a source that would downmix them (e.g.
+    # PulseAudio), open this many channels and keep only capture_pick_channel so
+    # the raw echo in CH1 isn't blended back into the clean CH0. Default 1 = the
+    # device already gives clean mono (e.g. direct ALSA hw on CH0).
+    capture_channels: int = Field(default=1, ge=1)
+    capture_pick_channel: int = Field(default=0, ge=0)
     playback_device: str | None = None
     playback_rate: int = 24000
     # Music volume (0..1) during a voice turn, and the fade applied when ducking.

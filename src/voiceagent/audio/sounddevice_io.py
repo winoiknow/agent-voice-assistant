@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import threading
+from array import array
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -31,6 +32,8 @@ class SounddeviceAudioIO(AudioIO):
         capture_device: str | int | None = None,
         playback_device: str | int | None = None,
         music_target: str | None = None,
+        capture_channels: int = 1,
+        capture_pick_channel: int = 0,
     ) -> None:
         super().__init__(capture_format, playback_format)
         try:
@@ -46,6 +49,11 @@ class SounddeviceAudioIO(AudioIO):
         self.capture_device = capture_device
         self.playback_device = playback_device
         self.music_target = music_target
+        # Open this many channels and keep only `capture_pick_channel` as mono,
+        # so a multi-channel source (e.g. the XVF3800 via PulseAudio) isn't
+        # downmixed (which would blend the raw/echo channel into the clean one).
+        self.capture_channels = capture_channels
+        self.capture_pick_channel = capture_pick_channel
 
         self._in_stream: Any = None
         self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=64)
@@ -60,15 +68,23 @@ class SounddeviceAudioIO(AudioIO):
         self._loop = asyncio.get_running_loop()
         self._stopped.clear()
 
+        nch = self.capture_channels
+        pick = self.capture_pick_channel
+
         def _callback(indata: bytes, _frames: int, _time: object, status: object) -> None:
             if status:
                 log.warning("capture_status", status=str(status))
+            data = bytes(indata)
+            if nch > 1:
+                samples = array("h")
+                samples.frombytes(data)
+                data = array("h", samples[pick::nch]).tobytes()  # keep one channel
             if self._loop is not None:
-                self._loop.call_soon_threadsafe(self._enqueue, bytes(indata))
+                self._loop.call_soon_threadsafe(self._enqueue, data)
 
         self._in_stream = self._sd.RawInputStream(
             samplerate=self.capture_format.rate,
-            channels=self.capture_format.channels,
+            channels=nch,
             dtype="int16",
             blocksize=self.frame_samples,
             device=self.capture_device,
