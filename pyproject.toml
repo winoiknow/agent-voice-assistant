@@ -43,7 +43,7 @@ wakeword = [
 # Realtime client to the speech2speech server. Not needed for dev/CI unit tests
 # (the session loop is tested with a fake connection); resampling needs numpy+scipy.
 realtime = [
-    "openai>=1.60",
+    "openai[realtime]>=1.60",  # the realtime extra pulls in websockets
     "numpy>=1.24",
     "scipy>=1.10",
 ]

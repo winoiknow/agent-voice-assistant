@@ -81,7 +81,15 @@ class SounddeviceAudioIO(AudioIO):
         try:
             self._queue.put_nowait(data)
         except asyncio.QueueFull:
-            log.warning("capture_overrun_dropped_frame")
+            # Expected when nothing is consuming yet (e.g. during WS connect).
+            log.debug("capture_overrun_dropped_frame")
+
+    def drain_capture(self) -> None:
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
 
     async def stop(self) -> None:
         self._stopped.set()

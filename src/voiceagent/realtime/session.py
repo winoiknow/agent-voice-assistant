@@ -124,6 +124,8 @@ class RealtimeSession:
         self._stop.clear()
         await conn.send(build_session_update(self.cfg))
         await self.audio.play_stream_start(AudioFormat(self.playback_rate, 1))
+        # Discard mic audio buffered during connect so the turn starts fresh.
+        self.audio.drain_capture()
 
         send_task = asyncio.create_task(self._send_loop(conn))
         recv_task = asyncio.create_task(self._recv_loop(conn))

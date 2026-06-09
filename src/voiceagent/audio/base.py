@@ -49,6 +49,9 @@ class AudioIO(ABC):
     def capture_stream(self) -> AsyncIterator[bytes]:
         """Yield int16-mono PCM frames at ``capture_format`` until stopped."""
 
+    def drain_capture(self) -> None:  # noqa: B027 - optional hook; default no-op
+        """Discard any buffered captured frames (e.g. accumulated during connect)."""
+
     # ── playback ─────────────────────────────────────────────────
     @abstractmethod
     async def play_pcm(self, data: bytes, fmt: AudioFormat | None = None) -> None:
