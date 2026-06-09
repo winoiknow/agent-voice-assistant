@@ -83,9 +83,11 @@ media:
   pause_via_ha: true         # true pause via HA; local ducking always applied
   sendspin:
     enabled: false
+    binary: sendspin         # pip install sendspin
     name: null               # defaults to device.name
-    server_url: null         # ws://...; null = mDNS auto-discovery
-    audio_device: null
+    server_url: null         # null = mDNS auto-discovery (Music Assistant finds it)
+    audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
+    log_level: INFO
     extra_args: []
   home_assistant:
     enabled: false

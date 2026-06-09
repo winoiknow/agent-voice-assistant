@@ -13,6 +13,7 @@ from typing import Any
 from voiceagent.audio import create_audio_io
 from voiceagent.config import Settings
 from voiceagent.logging_setup import get_logger
+from voiceagent.media import SendspinDaemon
 from voiceagent.realtime import RealtimeSession
 from voiceagent.respeaker import LedController, LedState, create_xvf_host
 from voiceagent.wakeword import create_wake_detector
@@ -154,6 +155,19 @@ async def run_realtime_test(settings: Settings, *, seconds: float = 30.0) -> dic
     async with io:
         await session.run(duration_s=seconds)
     return summary
+
+
+async def run_media_test(settings: Settings, *, seconds: float = 30.0) -> dict[str, object]:
+    """Start the sendspin daemon for a while so MA can auto-discover the player."""
+    daemon = SendspinDaemon(settings.media.sendspin, default_name=settings.device.name)
+    log.info("media_test", name=daemon.name, hint="check Music Assistant for this player")
+    await daemon.start()
+    try:
+        await asyncio.sleep(seconds)
+    finally:
+        running = daemon.is_running()
+        await daemon.stop()
+    return {"name": daemon.name, "argv": daemon.argv(), "ran": running, "seconds": seconds}
 
 
 async def run_respeaker_tune(settings: Settings) -> dict[str, object]:

@@ -168,12 +168,19 @@ class WakewordConfig(_StrictModel):
 
 
 class SendspinConfig(_StrictModel):
-    """Managed sendspin player sidecar (device is the player)."""
+    """Managed sendspin player sidecar (device is the player).
+
+    Run with no ``server_url`` so the daemon advertises via mDNS
+    (``_sendspin._tcp.local.``) and Music Assistant auto-discovers it; MA then
+    mirrors it into Home Assistant as a media_player entity.
+    """
 
     enabled: bool = False
+    binary: str = "sendspin"
     name: str | None = None  # defaults to device.name when unset
-    server_url: str | None = None  # ws://...; None => mDNS auto-discovery
-    audio_device: str | None = None
+    server_url: str | None = None  # ws://...; None => mDNS auto-discovery (preferred)
+    audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     extra_args: list[str] = Field(default_factory=list)
 
 

@@ -32,6 +32,7 @@ from voiceagent.config import Settings, load_config, resolve_config_path
 from voiceagent.diagnostics import (
     run_audio_test,
     run_led_test,
+    run_media_test,
     run_realtime_test,
     run_respeaker_tune,
     run_wake_test,
@@ -74,6 +75,11 @@ def _build_parser() -> argparse.ArgumentParser:
     rt_p = _with_config(sub.add_parser("realtime-test", help="One realtime conversation."))
     rt_p.add_argument(
         "--seconds", "-s", type=float, default=30.0, help="How long to converse."
+    )
+
+    media_p = _with_config(sub.add_parser("media-test", help="Run sendspin for MA discovery."))
+    media_p.add_argument(
+        "--seconds", "-s", type=float, default=30.0, help="How long to run the daemon."
     )
 
     return parser
@@ -160,6 +166,14 @@ def _cmd_realtime_test(config_path: str | None, seconds: float) -> int:
     return 0
 
 
+def _cmd_media_test(config_path: str | None, seconds: float) -> int:
+    settings = _load_or_exit(config_path)
+    configure_logging(settings.logging)
+    result = asyncio.run(run_media_test(settings, seconds=seconds))
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -177,6 +191,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_wake_test(args.config, args.seconds)
         if args.command == "realtime-test":
             return _cmd_realtime_test(args.config, args.seconds)
+        if args.command == "media-test":
+            return _cmd_media_test(args.config, args.seconds)
     except _ConfigExit as exit_:
         return exit_.code
     return 2  # unreachable: subparser is required
