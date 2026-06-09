@@ -113,6 +113,7 @@ async def run_realtime_test(settings: Settings, *, seconds: float = 30.0) -> dic
         "assistant_transcripts": [],
         "audio_bytes": 0,
         "responses": 0,
+        "response_statuses": [],
         "barge_ins": 0,
         "tool_calls": [],
         "errors": [],
@@ -133,6 +134,8 @@ async def run_realtime_test(settings: Settings, *, seconds: float = 30.0) -> dic
             summary["audio_bytes"] += ev["bytes"]
         elif kind == "response_done":
             summary["responses"] += 1
+            summary["response_statuses"].append(ev.get("status", ""))
+            log.info("response_done", status=ev.get("status", ""))
         elif kind == "barge_in":
             summary["barge_ins"] += 1
             log.info("barge_in")
