@@ -12,6 +12,8 @@ def test_argv_mdns_mode() -> None:
     assert argv[:2] == ["sendspin", "daemon"]
     assert "--name" in argv and "kitchen" in argv
     assert "--url" not in argv  # mDNS discovery mode
+    # software volume so ducking the player doesn't duck the shared device
+    assert argv[argv.index("--hardware-volume") + 1] == "false"
 
 
 def test_argv_with_url_and_device_and_extra() -> None:

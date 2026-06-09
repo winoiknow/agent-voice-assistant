@@ -26,6 +26,7 @@ class SendspinDaemon:
 
     def argv(self) -> list[str]:
         argv = [self.cfg.binary, "daemon", "--name", self.name, "--log-level", self.cfg.log_level]
+        argv += ["--hardware-volume", "true" if self.cfg.hardware_volume else "false"]
         if self.cfg.server_url:
             argv += ["--url", self.cfg.server_url]
         if self.cfg.audio_device:

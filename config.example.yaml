@@ -96,6 +96,8 @@ media:
     server_url: null         # null = mDNS auto-discovery (Music Assistant finds it)
     audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
     log_level: INFO
+    hardware_volume: false   # false = software per-stream volume so ducking the
+                             # music doesn't also duck the assistant's TTS
     extra_args: []
   home_assistant:
     enabled: false

@@ -192,6 +192,10 @@ class SendspinConfig(_StrictModel):
     server_url: str | None = None  # ws://...; None => mDNS auto-discovery (preferred)
     audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # False = software (per-stream) volume so ducking only attenuates the music,
+    # not the shared output device (which would also duck the assistant's TTS).
+    # True would control the system/hardware volume of the whole sink.
+    hardware_volume: bool = False
     extra_args: list[str] = Field(default_factory=list)
 
 
