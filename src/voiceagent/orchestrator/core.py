@@ -62,7 +62,9 @@ class Orchestrator:
         self.media = media
         self._factory = conversation_factory or self._default_factory
         self._shutdown = asyncio.Event()
-        self._state = LedState.IDLE
+        # None (not IDLE) so the first _set_state(IDLE) actually fires and forces
+        # the ring off — clearing any effect a previously killed run left set.
+        self._state: LedState | None = None
 
     def request_shutdown(self) -> None:
         self._shutdown.set()
