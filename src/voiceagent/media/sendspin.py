@@ -9,12 +9,23 @@ ducking are handled via Home Assistant + local PipeWire in later Phase-7 steps.
 from __future__ import annotations
 
 import asyncio
+import shutil
 import signal
+import sys
+from pathlib import Path
 
 from voiceagent.config import SendspinConfig
 from voiceagent.logging_setup import get_logger
 
 log = get_logger("media.sendspin")
+
+
+def _resolve_binary(binary: str) -> str:
+    """Resolve a bare ``sendspin`` to the venv's copy if it isn't on PATH."""
+    if "/" in binary or shutil.which(binary):
+        return binary
+    candidate = Path(sys.executable).parent / binary
+    return str(candidate) if candidate.exists() else binary
 
 
 class SendspinDaemon:
@@ -25,7 +36,8 @@ class SendspinDaemon:
         self._log_task: asyncio.Task[None] | None = None
 
     def argv(self) -> list[str]:
-        argv = [self.cfg.binary, "daemon", "--name", self.name, "--log-level", self.cfg.log_level]
+        binary = _resolve_binary(self.cfg.binary)
+        argv = [binary, "daemon", "--name", self.name, "--log-level", self.cfg.log_level]
         argv += ["--hardware-volume", "true" if self.cfg.hardware_volume else "false"]
         if self.cfg.server_url:
             argv += ["--url", self.cfg.server_url]

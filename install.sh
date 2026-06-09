@@ -95,6 +95,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Put the venv on PATH so the sendspin sidecar (installed in the venv) resolves.
+Environment=PATH=$INSTALL_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$INSTALL_DIR/.venv/bin/voiceagent run --config $CONFIG_DIR/config.yaml
 EnvironmentFile=-$CONFIG_DIR/secrets.env
 Restart=on-failure
