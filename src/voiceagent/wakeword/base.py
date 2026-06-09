@@ -13,9 +13,35 @@ for dev/CI and the real openWakeWord engine.
 from __future__ import annotations
 
 import math
+import os
 from abc import ABC, abstractmethod
 from array import array
+from collections.abc import Sequence
 from dataclasses import dataclass
+
+
+def is_model_path(spec: str) -> bool:
+    """True if a wakeword model spec is a file path rather than a pretrained name."""
+    if spec.endswith((".onnx", ".tflite")):
+        return True
+    return os.sep in spec or (os.altsep is not None and os.altsep in spec)
+
+
+def validate_model_specs(models: Sequence[str]) -> None:
+    """Check that any path-like model specs exist and are ONNX (our inference path).
+
+    Pretrained names (e.g. ``alexa``) pass through untouched.
+    """
+    for spec in models:
+        if not is_model_path(spec):
+            continue
+        if not os.path.isfile(spec):
+            raise FileNotFoundError(f"wakeword model file not found: {spec}")
+        if spec.endswith(".tflite"):
+            raise ValueError(
+                f"custom wakeword model must be .onnx (the ONNX inference path is "
+                f"used); got a .tflite file: {spec}. Export/convert it to .onnx."
+            )
 
 
 @dataclass(frozen=True)

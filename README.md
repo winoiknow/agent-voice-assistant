@@ -40,6 +40,20 @@ pip install --no-deps openwakeword     # see note below
 > needs (`onnxruntime`, `numpy`, `scipy`, `scikit-learn`, `tqdm`, `requests`).
 > Models download automatically on first run.
 
+### Custom wake word
+
+`wakeword.models` accepts built-in names **or paths to a custom-trained `.onnx`
+model**:
+
+```yaml
+wakeword:
+  models: ["/home/orangepi/models/hey_panel.onnx"]   # your own phrase
+```
+
+Train one with [openWakeWord](https://github.com/dscripka/openWakeWord) and export
+to ONNX (the `.tflite` export won't load on our ONNX inference path). Path entries
+are validated at startup; built-in names (`alexa`, `hey_jarvis`, …) still work.
+
 ## Quick start (development)
 
 ```bash

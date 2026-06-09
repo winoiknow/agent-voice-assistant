@@ -12,7 +12,12 @@ from collections.abc import Sequence
 from typing import Any
 
 from voiceagent.logging_setup import get_logger
-from voiceagent.wakeword.base import PrerollBuffer, WakeDetector, WakeEvent
+from voiceagent.wakeword.base import (
+    PrerollBuffer,
+    WakeDetector,
+    WakeEvent,
+    validate_model_specs,
+)
 
 log = get_logger("wakeword.openwakeword")
 
@@ -46,6 +51,10 @@ class OpenWakeWordDetector(WakeDetector):
 
         if rate != 16000:
             raise ValueError("openWakeWord requires a 16 kHz capture rate")
+
+        # ``models`` entries may be pretrained names (alexa, hey_jarvis, …) or paths
+        # to a custom-trained ``.onnx`` model. Validate path-like entries up front.
+        validate_model_specs(models)
 
         self._np = np
         # Ensure the shared feature models (melspectrogram/embedding) are present.

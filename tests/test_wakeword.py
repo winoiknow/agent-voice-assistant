@@ -3,8 +3,16 @@ from __future__ import annotations
 import math
 from array import array
 
+import pytest
+
 from voiceagent.config import WakewordConfig
-from voiceagent.wakeword import PrerollBuffer, create_wake_detector, frame_rms
+from voiceagent.wakeword import (
+    PrerollBuffer,
+    create_wake_detector,
+    frame_rms,
+    is_model_path,
+    validate_model_specs,
+)
 from voiceagent.wakeword.mock import MockWakeDetector
 
 
@@ -78,6 +86,32 @@ def test_mock_preroll_contains_recent_audio() -> None:
 def test_factory_selects_mock() -> None:
     det = create_wake_detector(WakewordConfig(engine="mock"), capture_rate=16000)
     assert isinstance(det, MockWakeDetector)
+
+
+def test_is_model_path() -> None:
+    assert not is_model_path("alexa")
+    assert not is_model_path("hey_jarvis")
+    assert is_model_path("models/hey_panel.onnx")
+    assert is_model_path("/abs/path/wake.onnx")
+    assert is_model_path("relative.tflite")
+
+
+def test_validate_model_specs_passes_names_and_existing_onnx(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    onnx = tmp_path / "hey_panel.onnx"
+    onnx.write_bytes(b"\x00")  # contents irrelevant to validation
+    validate_model_specs(["alexa", str(onnx)])  # no raise
+
+
+def test_validate_model_specs_missing_file() -> None:
+    with pytest.raises(FileNotFoundError):
+        validate_model_specs(["/nope/missing.onnx"])
+
+
+def test_validate_model_specs_rejects_tflite(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    tfl = tmp_path / "w.tflite"
+    tfl.write_bytes(b"\x00")
+    with pytest.raises(ValueError, match="must be .onnx"):
+        validate_model_specs([str(tfl)])
 
 
 def test_reset_clears_state() -> None:
