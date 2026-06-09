@@ -74,6 +74,10 @@ class RealtimeConfig(_StrictModel):
 
     # Conversation lifecycle.
     follow_up_window_s: float = 8.0
+    # After a conversation closes, ignore wake detection for this long while the
+    # mic keeps flowing — lets the XVF3800 AEC re-converge after music resumes so
+    # the resume transient doesn't false-trigger the wake word.
+    post_close_grace_s: float = 2.5
     # Spoken phrases that end the session (matched as substrings, label-stripped).
     closer_phrases: list[str] = Field(
         default_factory=lambda: [

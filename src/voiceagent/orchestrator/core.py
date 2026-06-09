@@ -86,11 +86,26 @@ class Orchestrator:
                     except Exception as exc:
                         log.error("conversation_failed", error=str(exc))
                         await self._fail_safe()
+                    await self._post_close_settle()
                 await self._set_state(LedState.IDLE)
                 log.info("orchestrator_stopped")
         finally:
             if self.media is not None:
                 await self.media.stop()
+
+    async def _post_close_settle(self) -> None:
+        """Drain the mic (no wake detection) so AEC re-converges after music resume."""
+        grace = self.settings.realtime.post_close_grace_s
+        if grace <= 0:
+            return
+        self.wake.reset()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + grace
+        async for _frame in self.audio.capture_stream():
+            if self._shutdown.is_set() or loop.time() >= deadline:
+                break
+        self.wake.reset()
+        log.debug("post_close_settle_done", grace_s=grace)
 
     async def _wait_for_wake(self) -> WakeEvent | None:
         log.info("idle_listening")

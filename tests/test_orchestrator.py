@@ -85,7 +85,7 @@ def _settings(tmp: Path | None = None, **over: Any) -> Settings:
         "audio": {"backend": "mock"},
         "wakeword": {"engine": "mock"},
         "respeaker": {"simulate": True},
-        "realtime": {"follow_up_window_s": 0.15},
+        "realtime": {"follow_up_window_s": 0.15, "post_close_grace_s": 0.0},
     }
     for k, v in over.items():
         data.setdefault(k, {}).update(v) if isinstance(v, dict) else data.__setitem__(k, v)
