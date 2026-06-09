@@ -14,6 +14,7 @@ venv/
 # Local config & secrets (never commit a real config)
 /config.yaml
 /config.local.yaml
+/config.hw.yaml
 *.secret
 
 # Vendored per-arch binaries are fetched by the installer; keep the README.

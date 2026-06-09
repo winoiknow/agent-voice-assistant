@@ -70,3 +70,40 @@ def test_factory_real_when_not_simulated() -> None:
     host = create_xvf_host(RespeakerConfig(simulate=False, transport="i2c"))
     assert isinstance(host, RealXvfHost)
     assert host._argv("LED_EFFECT", 1) == ["xvf_host", "-u", "i2c", "LED_EFFECT", "1"]
+
+
+async def test_real_led_color_packs_to_uint32(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from voiceagent.respeaker.xvf_host import RealXvfHost
+
+    host = RealXvfHost()
+    calls: list[tuple[object, ...]] = []
+
+    async def fake_run(command: str, *args: object) -> str:
+        calls.append((command, *args))
+        return ""
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    await host.led_color((0, 255, 0))  # green -> 0x00FF00
+    await host.led_color((255, 0, 0))  # red   -> 0xFF0000
+    await host.led_color((0, 0, 255))  # blue  -> 0x0000FF
+    assert calls == [
+        ("LED_COLOR", 0x00FF00),
+        ("LED_COLOR", 0xFF0000),
+        ("LED_COLOR", 0x0000FF),
+    ]
+
+
+async def test_real_get_param_ignores_device_banner(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from voiceagent.respeaker.xvf_host import RealXvfHost
+
+    host = RealXvfHost()
+
+    async def fake_run(name: str, *args: object) -> str:
+        # Banner numbers must NOT pollute the parsed value.
+        return (
+            "Device (USB)::device_init() -- Found device VID: 10374 PID: 26 interface: 3\n"
+            "AUDIO_MGR_MIC_GAIN 10\n"
+        )
+
+    monkeypatch.setattr(host, "_run", fake_run)
+    assert await host.get_param("AUDIO_MGR_MIC_GAIN") == [10.0]

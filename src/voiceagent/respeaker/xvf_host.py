@@ -13,7 +13,7 @@ shape and is centralized so it can be adjusted in one place.
 from __future__ import annotations
 
 import asyncio
-import re
+import contextlib
 from collections.abc import Sequence
 
 from voiceagent.logging_setup import get_logger
@@ -21,7 +21,8 @@ from voiceagent.respeaker.base import RGB, LedEffect, XvfHost
 
 log = get_logger("respeaker.xvf_host")
 
-_FLOAT_RE = re.compile(r"-?\d+(?:\.\d+)?")
+# Substrings xvf_host prints when it cannot reach the device (it still exits 0).
+_FAILURE_MARKERS = ("Failed to open device", "Could not connect", "No device found")
 
 
 class XvfHostError(RuntimeError):
@@ -56,16 +57,32 @@ class RealXvfHost(XvfHost):
                 f"the prebuilt binary; set respeaker.simulate: true for development."
             ) from exc
         out, err = await proc.communicate()
-        if proc.returncode != 0:
+        out_s = out.decode(errors="replace")
+        err_s = err.decode(errors="replace")
+        # xvf_host exits 0 even when it cannot open the USB device, so detect
+        # failures by their message markers as well as a non-zero return code.
+        if proc.returncode != 0 or any(m in (out_s + err_s) for m in _FAILURE_MARKERS):
+            detail = (err_s or out_s).strip().splitlines()
             raise XvfHostError(
                 f"xvf_host {command} failed (rc={proc.returncode}): "
-                f"{err.decode(errors='replace').strip()}"
+                f"{detail[0] if detail else 'unknown error'}"
             )
-        return out.decode(errors="replace")
+        return out_s
 
     async def get_param(self, name: str) -> list[float]:
+        # Output carries a device-init banner plus an echoed "<NAME> <values...>"
+        # line. Parse the line that starts with the command name, regardless of
+        # which stream the banner used.
         out = await self._run(name)
-        return [float(m.group()) for m in _FLOAT_RE.finditer(out)]
+        for line in out.splitlines():
+            parts = line.split()
+            if parts and parts[0] == name:
+                values: list[float] = []
+                for tok in parts[1:]:
+                    with contextlib.suppress(ValueError):
+                        values.append(float(tok))
+                return values
+        return []
 
     async def set_param(self, name: str, values: Sequence[float]) -> None:
         await self._run(name, *values)
@@ -77,8 +94,10 @@ class RealXvfHost(XvfHost):
         await self._run("LED_EFFECT", int(effect))
 
     async def led_color(self, rgb: RGB) -> None:
+        # Firmware LED_COLOR is a single uint32, 0xRRGGBB (verified on hardware,
+        # firmware 2.0.6). Not three r/g/b args.
         r, g, b = rgb
-        await self._run("LED_COLOR", r, g, b)
+        await self._run("LED_COLOR", (r << 16) | (g << 8) | b)
 
     async def led_brightness(self, value: int) -> None:
         await self._run("LED_BRIGHTNESS", value)
