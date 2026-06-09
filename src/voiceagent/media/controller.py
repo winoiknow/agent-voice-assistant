@@ -43,6 +43,8 @@ class MediaController:
         self._ha_factory = ha_client_factory or self._default_ha
         self._ha: Any = None
         self._paused = False
+        self._ducked = False
+        self._saved_volume: float | None = None
 
     @staticmethod
     def _default_ha(cfg: HomeAssistantConfig) -> HomeAssistantClient:
@@ -73,28 +75,44 @@ class MediaController:
             await self._daemon.stop()
 
     async def on_turn_start(self) -> None:
-        """Pause music (and/or duck) when a voice turn begins."""
-        if self.settings.audio.music_target:
+        """Duck or pause the player when a voice turn begins (only if it's playing)."""
+        if self.settings.audio.music_target:  # optional instant local PipeWire duck
             with contextlib.suppress(Exception):
                 await self.audio.set_music_gain(self.settings.audio.duck_level)
-        if self._ha is not None and self._media.pause_via_ha and self._entity:
-            try:
-                if await self._ha.is_playing(self._entity):
-                    await self._ha.media_pause(self._entity)
-                    self._paused = True
-                    log.info("music_paused", entity=self._entity)
-            except Exception as exc:
-                log.warning("music_pause_failed", error=str(exc))
+        if self._ha is None or not self._entity:
+            return
+        try:
+            if not await self._ha.is_playing(self._entity):
+                return
+            if self._media.on_turn == "pause":
+                await self._ha.media_pause(self._entity)
+                self._paused = True
+                log.info("music_paused", entity=self._entity)
+            else:  # duck: lower the volume but keep the stream flowing
+                self._saved_volume = await self._ha.get_volume(self._entity)
+                await self._ha.set_volume(self._entity, self._media.duck_level)
+                self._ducked = True
+                log.info("music_ducked", entity=self._entity,
+                         to=self._media.duck_level, was=self._saved_volume)
+        except Exception as exc:
+            log.warning("music_duck_pause_failed", error=str(exc))
 
     async def on_turn_end(self) -> None:
-        """Resume music (and/or unduck) when the conversation closes."""
-        if self._paused and self._ha is not None and self._entity:
+        """Restore the player (resume or un-duck) when the conversation closes."""
+        if self._ha is not None and self._entity:
             try:
-                await self._ha.media_play(self._entity)
-                log.info("music_resumed", entity=self._entity)
+                if self._paused:
+                    await self._ha.media_play(self._entity)
+                    log.info("music_resumed", entity=self._entity)
+                elif self._ducked:
+                    if self._saved_volume is not None:
+                        await self._ha.set_volume(self._entity, self._saved_volume)
+                    log.info("music_unducked", entity=self._entity, to=self._saved_volume)
             except Exception as exc:
-                log.warning("music_resume_failed", error=str(exc))
-            self._paused = False
+                log.warning("music_restore_failed", error=str(exc))
+        self._paused = False
+        self._ducked = False
+        self._saved_volume = None
         if self.settings.audio.music_target:
             with contextlib.suppress(Exception):
                 await self.audio.set_music_gain(1.0)

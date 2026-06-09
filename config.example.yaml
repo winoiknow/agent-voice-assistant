@@ -86,7 +86,9 @@ wakeword:
 
 # ── media: sendspin player + Home Assistant / Music Assistant ───────────────
 media:
-  pause_via_ha: true         # true pause via HA; local ducking always applied
+  on_turn: duck              # duck = lower volume, keep stream (instant resume,
+                             #        keeps AEC converged); pause = true pause
+  duck_level: 0.25           # player volume (0..1) during a turn when on_turn: duck
   sendspin:
     enabled: false
     binary: sendspin         # pip install sendspin

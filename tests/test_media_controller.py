@@ -9,9 +9,10 @@ from voiceagent.media import MediaController
 
 
 class FakeHA:
-    def __init__(self, playing: bool = True) -> None:
+    def __init__(self, playing: bool = True, volume: float = 0.8) -> None:
         self.playing = playing
-        self.calls: list[tuple[str, str]] = []
+        self.volume = volume
+        self.calls: list[tuple[str, Any]] = []
 
     async def is_playing(self, entity: str) -> bool:
         return self.playing
@@ -24,11 +25,18 @@ class FakeHA:
         self.calls.append(("play", entity))
         self.playing = True
 
+    async def get_volume(self, entity: str) -> float:
+        return self.volume
+
+    async def set_volume(self, entity: str, level: float) -> None:
+        self.calls.append(("volume", level))
+        self.volume = level
+
     async def aclose(self) -> None:
         pass
 
 
-def _settings(**ha: Any) -> Settings:
+def _settings(media_over: dict[str, Any] | None = None, **ha: Any) -> Settings:
     base = {
         "enabled": True,
         "base_url": "https://ha.local",
@@ -36,10 +44,9 @@ def _settings(**ha: Any) -> Settings:
         "media_player_entity": "media_player.ha_panel_voice",
     }
     base.update(ha)
-    return Settings(
-        audio={"backend": "mock"},
-        media={"sendspin": {"enabled": False}, "home_assistant": base},
-    )
+    media: dict[str, Any] = {"sendspin": {"enabled": False}, "home_assistant": base}
+    media.update(media_over or {})
+    return Settings(audio={"backend": "mock"}, media=media)
 
 
 def _controller(settings: Settings, ha: FakeHA) -> MediaController:
@@ -47,9 +54,23 @@ def _controller(settings: Settings, ha: FakeHA) -> MediaController:
     return MediaController(settings, io, ha_client_factory=lambda _cfg: ha)
 
 
-async def test_pause_on_turn_start_resume_on_end() -> None:
+async def test_duck_on_turn_start_restore_on_end() -> None:
+    # default on_turn = duck
+    ha = FakeHA(playing=True, volume=0.8)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    assert ha.calls[-1] == ("volume", 0.25)  # ducked
+    assert ha.volume == 0.25
+    await mc.on_turn_end()
+    assert ha.calls[-1] == ("volume", 0.8)  # restored to the saved level
+    assert ha.volume == 0.8
+    await mc.stop()
+
+
+async def test_pause_mode_on_turn_start_resume_on_end() -> None:
     ha = FakeHA(playing=True)
-    mc = _controller(_settings(), ha)
+    mc = _controller(_settings(media_over={"on_turn": "pause"}), ha)
     await mc.start()
     await mc.on_turn_start()
     assert ha.calls[-1] == ("pause", "media_player.ha_panel_voice")
@@ -58,14 +79,14 @@ async def test_pause_on_turn_start_resume_on_end() -> None:
     await mc.stop()
 
 
-async def test_no_pause_when_not_playing() -> None:
+async def test_no_action_when_not_playing() -> None:
     ha = FakeHA(playing=False)
-    mc = _controller(_settings(), ha)
+    mc = _controller(_settings(), ha)  # duck mode
     await mc.start()
     await mc.on_turn_start()
-    assert ha.calls == []  # nothing playing -> nothing to pause
+    assert ha.calls == []  # nothing playing -> don't touch it
     await mc.on_turn_end()
-    assert ha.calls == []  # we never paused -> don't resume
+    assert ha.calls == []
     await mc.stop()
 
 
@@ -79,14 +100,16 @@ async def test_ha_disabled_is_noop() -> None:
     await mc.stop()
 
 
-async def test_resume_failure_is_swallowed() -> None:
+async def test_restore_failure_is_swallowed() -> None:
     class BrokenHA(FakeHA):
-        async def media_play(self, entity: str) -> None:
-            raise RuntimeError("ha down")
+        async def set_volume(self, entity: str, level: float) -> None:
+            if level != 0.25:  # fail only on the restore
+                raise RuntimeError("ha down")
+            await super().set_volume(entity, level)
 
-    ha = BrokenHA(playing=True)
-    mc = _controller(_settings(), ha)
+    ha = BrokenHA(playing=True, volume=0.9)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
     await mc.start()
     await mc.on_turn_start()
-    await mc.on_turn_end()  # must not raise even if resume fails
+    await mc.on_turn_end()  # must not raise even if restore fails
     await mc.stop()

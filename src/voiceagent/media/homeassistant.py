@@ -60,6 +60,21 @@ class HomeAssistantClient:
     async def media_play(self, entity_id: str) -> None:
         await self.call_service("media_player", "media_play", {"entity_id": entity_id})
 
+    async def set_volume(self, entity_id: str, level: float) -> None:
+        await self.call_service(
+            "media_player", "volume_set",
+            {"entity_id": entity_id, "volume_level": round(max(0.0, min(1.0, level)), 3)},
+        )
+
+    async def get_volume(self, entity_id: str) -> float | None:
+        try:
+            attrs = (await self.get_state(entity_id)).get("attributes", {})
+            vol = attrs.get("volume_level")
+            return float(vol) if vol is not None else None
+        except Exception as exc:
+            log.warning("ha_volume_read_error", entity=entity_id, error=str(exc))
+            return None
+
     async def is_playing(self, entity_id: str) -> bool:
         try:
             return (await self.get_state(entity_id)).get("state") == "playing"

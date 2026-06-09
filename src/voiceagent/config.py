@@ -207,8 +207,14 @@ class HomeAssistantConfig(_StrictModel):
 class MediaConfig(_StrictModel):
     sendspin: SendspinConfig = Field(default_factory=SendspinConfig)
     home_assistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
-    # Use HA media_player.pause for a true pause; local ducking is always applied.
-    pause_via_ha: bool = True
+    # What to do to the HA player on a voice turn:
+    #   duck  = lower its volume, keep the stream flowing (instant resume, keeps
+    #           the XVF3800 AEC converged) — recommended.
+    #   pause = true pause (frees the device, but resume re-buffers and the AEC
+    #           re-converges, needing realtime.post_close_grace_s).
+    on_turn: Literal["duck", "pause"] = "duck"
+    # Volume (0..1) the player is ducked to during a turn (on_turn: duck).
+    duck_level: float = Field(default=0.25, ge=0.0, le=1.0)
 
 
 class FeedbackConfig(_StrictModel):
