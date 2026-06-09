@@ -7,10 +7,13 @@ against real hardware on the SBC, unchanged.
 
 from __future__ import annotations
 
+import asyncio
+
 from voiceagent.audio import create_audio_io
 from voiceagent.config import Settings
 from voiceagent.logging_setup import get_logger
 from voiceagent.respeaker import LedController, LedState, create_xvf_host
+from voiceagent.wakeword import create_wake_detector
 
 log = get_logger("diagnostics")
 
@@ -63,6 +66,40 @@ async def run_led_test(settings: Settings, state: str | None = None) -> dict[str
         await controller.show(s)
 
     return {"host": type(host).__name__, "shown": [s.value for s in states]}
+
+
+async def run_wake_test(settings: Settings, *, seconds: float = 20.0) -> dict[str, object]:
+    """Listen for the wake word for ``seconds``; play the cue + log each detection."""
+    io = create_audio_io(settings.audio)
+    detector = create_wake_detector(settings.wakeword, settings.audio.capture_rate)
+    detections: list[dict[str, object]] = []
+    loop = asyncio.get_running_loop()
+
+    async with io:
+        log.info("wake_listening", engine=settings.wakeword.engine, seconds=seconds)
+        start = loop.time()
+        async for frame in io.capture_stream():
+            event = detector.process(frame)
+            if event is not None:
+                detections.append(
+                    {
+                        "model": event.model,
+                        "score": round(event.score, 3),
+                        "preroll_ms": event.preroll_ms,
+                        "at_s": round(loop.time() - start, 2),
+                    }
+                )
+                if settings.wakeword.wake_sound:
+                    await io.play_wav(settings.wakeword.wake_sound)
+            if loop.time() - start >= seconds:
+                break
+
+    return {
+        "engine": settings.wakeword.engine,
+        "seconds": seconds,
+        "count": len(detections),
+        "detections": detections,
+    }
 
 
 async def run_respeaker_tune(settings: Settings) -> dict[str, object]:

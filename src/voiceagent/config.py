@@ -135,16 +135,23 @@ class LedConfig(_StrictModel):
 
 
 class WakewordConfig(_StrictModel):
-    """openWakeWord detection and the wake confirmation sound."""
+    """openWakeWord detection and the wake confirmation sound.
+
+    ``engine: mock`` uses a dependency-free RMS-triggered detector for dev/CI;
+    ``openwakeword`` is the real engine (install the ``wakeword`` extra).
+    """
 
     enabled: bool = True
+    engine: Literal["openwakeword", "mock"] = "openwakeword"
     models: list[str] = Field(default_factory=lambda: ["alexa"])
     threshold: float = Field(default=0.5, ge=0.0, le=1.0)
-    vad_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+    vad_threshold: float = Field(default=0.0, ge=0.0, le=1.0)  # 0 disables the VAD gate
     cooldown_s: float = Field(default=2.0, ge=0.0)
     preroll_s: float = Field(default=0.5, ge=0.0)
     # User-supplied wake confirmation .wav, played once on detection.
     wake_sound: str | None = None
+    # mock engine: fire when a frame's RMS exceeds this (int16 scale, 0..32767).
+    mock_trigger_rms: float = Field(default=1500.0, ge=0.0)
 
 
 class SendspinConfig(_StrictModel):

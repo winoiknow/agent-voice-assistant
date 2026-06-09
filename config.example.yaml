@@ -65,12 +65,14 @@ respeaker:
 # ── wake word (openWakeWord) ────────────────────────────────────────────────
 wakeword:
   enabled: true
+  engine: openwakeword       # openwakeword | mock (mock = RMS-triggered, no deps)
   models: [alexa]            # openWakeWord model name(s) or path(s)
   threshold: 0.5
-  vad_threshold: 0.5
+  vad_threshold: 0.0         # >0 enables openWakeWord's VAD gate (fewer false fires)
   cooldown_s: 2.0
   preroll_s: 0.5
   wake_sound: null           # path to a 16-bit PCM .wav played once on wake
+  mock_trigger_rms: 1500.0   # mock engine: fire when frame RMS exceeds this
 
 # ── media: sendspin player + Home Assistant / Music Assistant ───────────────
 media:

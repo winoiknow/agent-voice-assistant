@@ -92,3 +92,13 @@ def test_audio_test_invalid_config(tmp_path: Path) -> None:
     cfg = tmp_path / "bad.yaml"
     cfg.write_text("audio:\n  duck_level: 9\n")
     assert main(["audio-test", "--config", str(cfg)]) == 1
+
+
+def test_wake_test_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text(
+        "audio:\n  backend: mock\nwakeword:\n  engine: mock\n  mock_trigger_rms: 0.0\n"
+    )
+    rc = main(["wake-test", "--seconds", "0.1", "--config", str(cfg)])
+    assert rc == 0
+    assert '"engine": "mock"' in capsys.readouterr().out

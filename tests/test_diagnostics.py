@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from voiceagent.config import Settings
-from voiceagent.diagnostics import run_audio_test, run_led_test, run_respeaker_tune
+from voiceagent.diagnostics import (
+    run_audio_test,
+    run_led_test,
+    run_respeaker_tune,
+    run_wake_test,
+)
 
 
 def _mock_settings(**over: object) -> Settings:
@@ -50,6 +55,24 @@ async def test_led_test_single_state() -> None:
     s = _mock_settings()
     result = await run_led_test(s, "speaking")
     assert result["shown"] == ["speaking"]
+
+
+async def test_wake_test_detects_on_mock() -> None:
+    # trigger_rms 0 => even silence fires; cooldown lets exactly one through quickly.
+    s = _mock_settings(
+        wakeword={"engine": "mock", "mock_trigger_rms": 0.0, "cooldown_s": 2.0}
+    )
+    result = await run_wake_test(s, seconds=0.15)
+    assert result["engine"] == "mock"
+    assert result["count"] >= 1  # type: ignore[operator]
+    first = result["detections"][0]  # type: ignore[index]
+    assert first["model"] == "mock"
+
+
+async def test_wake_test_silence_no_false_fire() -> None:
+    s = _mock_settings(wakeword={"engine": "mock", "mock_trigger_rms": 1500.0})
+    result = await run_wake_test(s, seconds=0.1)
+    assert result["count"] == 0  # mock audio is silence; high threshold => no fire
 
 
 async def test_respeaker_tune_applies_and_reads_back() -> None:
