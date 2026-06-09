@@ -78,6 +78,7 @@ class RealtimeSession:
         capture_rate: int,
         playback_rate: int,
         on_event: EventCallback | None = None,
+        preroll: bytes = b"",
     ) -> None:
         self.cfg = cfg
         self.audio = audio_io
@@ -85,6 +86,7 @@ class RealtimeSession:
         self.playback_rate = playback_rate
         self.wire_rate = wire_rate(cfg)
         self._on_event = on_event
+        self.preroll = preroll
         self._stop = asyncio.Event()
 
     def _emit(self, kind: str, **data: Any) -> None:
@@ -126,6 +128,15 @@ class RealtimeSession:
         await self.audio.play_stream_start(AudioFormat(self.playback_rate, 1))
         # Discard mic audio buffered during connect so the turn starts fresh.
         self.audio.drain_capture()
+        # Seed the wake-word pre-roll so the user's first words aren't clipped.
+        if self.preroll:
+            pcm = resample_pcm16(self.preroll, self.capture_rate, self.wire_rate)
+            await conn.send(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(pcm).decode("ascii"),
+                }
+            )
 
         send_task = asyncio.create_task(self._send_loop(conn))
         recv_task = asyncio.create_task(self._recv_loop(conn))
@@ -174,6 +185,8 @@ class RealtimeSession:
             # Barge-in: cut local playback immediately.
             self.audio.play_stream_clear()
             self._emit("barge_in")
+        elif etype == "input_audio_buffer.speech_stopped":
+            self._emit("speech_stopped")
         elif etype == "conversation.item.input_audio_transcription.delta":
             self._emit("user_transcript", text=_attr(event, "delta", ""), final=False)
         elif etype == "conversation.item.input_audio_transcription.completed":

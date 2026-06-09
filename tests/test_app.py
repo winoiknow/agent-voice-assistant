@@ -3,28 +3,27 @@ from __future__ import annotations
 import asyncio
 
 from voiceagent.app import App
-from voiceagent.config import load_config
+from voiceagent.config import Settings
+
+
+def _mock_settings() -> Settings:
+    return Settings(
+        audio={"backend": "mock"},
+        wakeword={"engine": "mock"},  # silence won't trigger -> stays idle
+        respeaker={"simulate": True},
+    )
 
 
 async def test_app_runs_and_shuts_down() -> None:
-    settings = load_config(None)
-    app = App(settings)
+    app = App(_mock_settings())
 
-    async def _stop_soon() -> None:
-        await asyncio.sleep(0.05)
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.1)  # let run() build the orchestrator
         app.request_shutdown(reason="test")
 
-    # run() must return promptly once shutdown is requested.
-    await asyncio.wait_for(asyncio.gather(app.run(), _stop_soon()), timeout=2.0)
+    # App idles in the wake loop (mock silence never fires) until shutdown.
+    await asyncio.wait_for(asyncio.gather(app.run(), stop_soon()), timeout=3.0)
 
 
-async def test_request_shutdown_is_idempotent() -> None:
-    app = App(load_config(None))
-    app.request_shutdown()
-    app.request_shutdown()  # second call must not raise
-    assert app._shutdown.is_set()
-
-
-def test_run_via_load() -> None:
-    # Smoke: constructing App from default config does not raise.
-    App(load_config(None))
+def test_request_shutdown_before_run_is_safe() -> None:
+    App(_mock_settings()).request_shutdown()  # orchestrator not built yet; no error

@@ -74,6 +74,19 @@ class RealtimeConfig(_StrictModel):
 
     # Conversation lifecycle.
     follow_up_window_s: float = 8.0
+    # Spoken phrases that end the session (matched as substrings, label-stripped).
+    closer_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "goodbye",
+            "good bye",
+            "that's all",
+            "that is all",
+            "that will be all",
+            "never mind",
+            "go to sleep",
+            "stop listening",
+        ]
+    )
 
     # Resilience.
     connect_timeout_s: float = 10.0
