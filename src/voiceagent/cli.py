@@ -82,6 +82,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--seconds", "-s", type=float, default=30.0, help="How long to run the daemon."
     )
 
+    init_p = sub.add_parser("init", help="Interactive config wizard.")
+    init_p.add_argument("--config", "-c", default=None, help="config.yaml output path.")
+    init_p.add_argument("--secrets", default=None, help="secrets env output path.")
+    init_p.add_argument("--xvf-host-path", default="xvf_host", help="Path to the xvf_host binary.")
+    init_p.add_argument("--default-model", default="alexa", help="Default wake-word model.")
+    init_p.add_argument("--force", action="store_true", help="Overwrite existing config.")
+
     return parser
 
 
@@ -174,6 +181,28 @@ def _cmd_media_test(config_path: str | None, seconds: float) -> int:
     return 0
 
 
+def _cmd_init(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from voiceagent.config import _xdg_config_home
+    from voiceagent.setup_wizard import run_wizard
+
+    base = _xdg_config_home() / "voiceagent"
+    config_path = Path(args.config) if args.config else base / "config.yaml"
+    secrets_path = Path(args.secrets) if args.secrets else base / "secrets.env"
+    run_wizard(
+        config_path=config_path,
+        secrets_path=secrets_path,
+        xvf_host_path=args.xvf_host_path,
+        default_model=args.default_model,
+        force=args.force,
+    )
+    print(f"\nWrote {config_path}")
+    if secrets_path.exists():
+        print(f"Wrote {secrets_path} (secrets, mode 600)")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -193,6 +222,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_realtime_test(args.config, args.seconds)
         if args.command == "media-test":
             return _cmd_media_test(args.config, args.seconds)
+        if args.command == "init":
+            return _cmd_init(args)
     except _ConfigExit as exit_:
         return exit_.code
     return 2  # unreachable: subparser is required

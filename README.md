@@ -7,9 +7,38 @@ server: all STT / LLM / TTS happen off-device. On the SBC it runs wake-word
 detection (openWakeWord), a reSpeaker XVF3800 4-mic array (on-board AEC +
 beamforming), and can play and announce media via Music Assistant / Home Assistant.
 
-> **Status:** early development. **Phase 2 complete**; **Phase 3 mock-complete** —
-> audio I/O and reSpeaker `xvf_host` control are built behind mock + real backends
-> and fully testable without hardware. A hardware validation pass is pending.
+## Install (on the SBC)
+
+One line — installs system deps, the package, the reSpeaker `xvf_host` binary, a
+udev rule, runs a config wizard, and registers a systemd user service:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/winoiknow/agent-voice-assistant/main/install.sh | bash
+```
+
+The wizard asks for your speech2speech URL/API key, wake word (defaults to the
+bundled **`Belvedere`** model), and optional Music Assistant / Home Assistant
+control. Secrets go to `~/.config/voiceagent/secrets.env` (mode 600), never into
+`config.yaml`. Manage it with:
+
+```bash
+systemctl --user status voiceagent
+journalctl --user -u voiceagent -f
+voiceagent init --force          # re-run the wizard
+```
+
+> ### ⏱️ Time sync is essential
+> sendspin's multi-room playback is **clock-driven**: the SBC and your **Music
+> Assistant** host **must share the same time source**, or playback sync drifts and
+> start/resume buffering gets worse. Install **chrony** (the installer does) and
+> point both machines at the **same NTP server**.
+
+> ### Audio routing note
+> If the device runs a desktop/PulseAudio session, the XVF3800 is the pulse default
+> source/sink — capture via `default` and keep **CH0 only**
+> (`audio.capture_channels: 2`, `capture_pick_channel: 0`); the wizard sets this.
+> CH0 is the hardware-AEC'd/beamformed channel; capturing the raw stereo downmix
+> reintroduces speaker echo (false wakes, barge-ins, STT hallucinations).
 
 ## Develop without hardware
 

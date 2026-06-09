@@ -28,9 +28,15 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+
 # Standard locations probed (in order) when no path is given explicitly.
+def _xdg_config_home() -> Path:
+    return Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config")))
+
+
 DEFAULT_CONFIG_LOCATIONS: tuple[Path, ...] = (
     Path("config.yaml"),
+    _xdg_config_home() / "voiceagent" / "config.yaml",
     Path("/etc/voiceagent/config.yaml"),
 )
 
