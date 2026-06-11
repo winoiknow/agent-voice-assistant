@@ -131,6 +131,20 @@ feedback:
     think_color: [0, 0, 255]    # blue while awaiting the model (breath/pulse)
     speak_color: [0, 0, 255]    # blue while speaking
 
+# ── multi-device wake arbitration ───────────────────────────────────────────
+# When several units hear one wake word, only the strongest (closest/loudest)
+# answers. Off by default ⇒ every unit handles its own wake. Needs ≥2 units on the
+# same LAN sharing a community; accurate time sync (chrony) helps correlate wakes.
+arbitration:
+  enabled: false
+  community: default         # only units sharing this string arbitrate together
+  port: 51234                # UDP broadcast port for announcements + presence
+  broadcast_address: 255.255.255.255
+  window_ms: 700             # how long to collect peers' wake announcements
+  device_id: null            # announcement id; defaults to device.name
+  presence_interval_s: 5.0   # presence-beacon cadence (lets a solo unit skip waiting)
+  peer_timeout_s: 15.0       # drop a peer not heard from for this long
+
 # ── logging ─────────────────────────────────────────────────────────────────
 logging:
   level: INFO                # CRITICAL | ERROR | WARNING | INFO | DEBUG

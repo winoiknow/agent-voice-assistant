@@ -257,6 +257,32 @@ class MediaConfig(_StrictModel):
     duck_level: float = Field(default=0.25, ge=0.0, le=1.0)
 
 
+class ArbitrationConfig(_StrictModel):
+    """Multi-device wake arbitration: when several units hear one wake word, only
+    the strongest (closest/loudest) answers. Units on the same ``community`` exchange
+    a tiny UDP broadcast on wake; the rest suppress and stay idle.
+
+    Disabled by default ⇒ today's behavior (handle every wake immediately). With it
+    on, periodic presence beacons let a unit with no peers skip the arbitration
+    window, so a solo device pays no added latency.
+    """
+
+    enabled: bool = False
+    # Only units sharing this string arbitrate together (isolates rooms/buildings).
+    community: str = "default"
+    # UDP port for the broadcast announcements + presence beacons.
+    port: int = Field(default=51234, ge=1, le=65535)
+    # Subnet broadcast address to send to (255.255.255.255 = local subnet).
+    broadcast_address: str = "255.255.255.255"
+    # How long to collect peers' wake announcements before deciding (ms).
+    window_ms: int = Field(default=700, ge=0)
+    # Stable id for this unit in announcements; defaults to device.name when unset.
+    device_id: str | None = None
+    # Presence beacon cadence and how long a silent peer stays "known".
+    presence_interval_s: float = Field(default=5.0, gt=0)
+    peer_timeout_s: float = Field(default=15.0, gt=0)
+
+
 class FeedbackConfig(_StrictModel):
     error_sound: str | None = None
     led: LedConfig = Field(default_factory=LedConfig)
@@ -293,6 +319,7 @@ class Settings(BaseSettings):
     wakeword: WakewordConfig = Field(default_factory=WakewordConfig)
     media: MediaConfig = Field(default_factory=MediaConfig)
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
+    arbitration: ArbitrationConfig = Field(default_factory=ArbitrationConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
     @classmethod

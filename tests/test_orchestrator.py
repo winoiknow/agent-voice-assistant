@@ -165,6 +165,65 @@ async def test_conversation_error_triggers_failsafe(tmp_path: Path) -> None:
     assert led.states[-1] is LedState.IDLE
 
 
+class FakeArbitrator:
+    def __init__(self, handle: bool) -> None:
+        self.handle = handle
+        self.started = False
+        self.stopped = False
+        self.calls = 0
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def should_handle(self, wake: Any) -> bool:
+        self.calls += 1
+        return self.handle
+
+
+class OnceWake(OneShotWake):
+    """Fires once and stays fired — reset() does NOT re-arm it, so a suppressed
+    wake doesn't loop forever against the mock's restarting capture stream."""
+
+    def reset(self) -> None:  # override: keep _fired set
+        pass
+
+
+async def test_arbitration_suppresses_wake_when_peer_wins() -> None:
+    arb = FakeArbitrator(handle=False)
+    io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512, max_frames=2)
+    led = RecordingLed()
+
+    def factory(on_event: Any, preroll: bytes) -> FakeConversation:
+        raise AssertionError("conversation must not start when arbitration suppresses")
+
+    orch = Orchestrator(_settings(), io, OnceWake(), led, conversation_factory=factory,  # type: ignore[arg-type]
+                        arbitrator=arb)
+    await asyncio.wait_for(orch.run(), timeout=3.0)
+    assert arb.started and arb.stopped
+    assert LedState.ENGAGING not in led.states  # never engaged
+    assert led.states[-1] is LedState.IDLE
+
+
+async def test_arbitration_handles_wake_when_we_win() -> None:
+    arb = FakeArbitrator(handle=True)
+    events = [{"kind": "response_done", "status": "completed"}]
+    io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512, max_frames=2)
+    led = RecordingLed()
+
+    def factory(on_event: Any, preroll: bytes) -> FakeConversation:
+        return FakeConversation(on_event, events, hold=True)
+
+    orch = Orchestrator(_settings(), io, OneShotWake(), led, conversation_factory=factory,  # type: ignore[arg-type]
+                        arbitrator=arb)
+    await asyncio.wait_for(orch.run(), timeout=3.0)
+    assert arb.calls >= 1
+    assert LedState.ENGAGING in led.states  # we won -> engaged
+    assert led.states[-1] is LedState.IDLE
+
+
 def _wav(path: Path) -> str:
     with wave.open(str(path), "wb") as wf:
         wf.setnchannels(1)

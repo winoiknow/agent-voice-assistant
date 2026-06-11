@@ -30,6 +30,7 @@ from voiceagent import __version__
 from voiceagent.app import run_app
 from voiceagent.config import Settings, load_config, resolve_config_path
 from voiceagent.diagnostics import (
+    run_arbitration_test,
     run_audio_test,
     run_led_test,
     run_media_test,
@@ -80,6 +81,12 @@ def _build_parser() -> argparse.ArgumentParser:
     media_p = _with_config(sub.add_parser("media-test", help="Run sendspin for MA discovery."))
     media_p.add_argument(
         "--seconds", "-s", type=float, default=30.0, help="How long to run the daemon."
+    )
+
+    arb_p = _with_config(sub.add_parser(
+        "arbitration-test", help="Multi-device wake arbitration over UDP broadcast."))
+    arb_p.add_argument(
+        "--seconds", "-s", type=float, default=20.0, help="How long to run."
     )
 
     init_p = sub.add_parser("init", help="Interactive config wizard.")
@@ -184,6 +191,14 @@ def _cmd_media_test(config_path: str | None, seconds: float) -> int:
     return 0
 
 
+def _cmd_arbitration_test(config_path: str | None, seconds: float) -> int:
+    settings = _load_or_exit(config_path)
+    configure_logging(settings.logging)
+    result = asyncio.run(run_arbitration_test(settings, seconds=seconds))
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0
+
+
 def _cmd_init(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -226,6 +241,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_realtime_test(args.config, args.seconds)
         if args.command == "media-test":
             return _cmd_media_test(args.config, args.seconds)
+        if args.command == "arbitration-test":
+            return _cmd_arbitration_test(args.config, args.seconds)
         if args.command == "init":
             return _cmd_init(args)
     except _ConfigExit as exit_:

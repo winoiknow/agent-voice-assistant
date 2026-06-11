@@ -64,6 +64,7 @@ class Orchestrator:
         media: Any = None,
         conversation_factory: ConversationFactory | None = None,
         conn_manager: Any = None,
+        arbitrator: Any = None,
     ) -> None:
         self.settings = settings
         self.audio = audio_io
@@ -71,6 +72,7 @@ class Orchestrator:
         self.led = led
         self.media = media
         self._conn_manager = conn_manager
+        self._arbitrator = arbitrator
         self._factory = conversation_factory or self._default_factory
         self._shutdown = asyncio.Event()
         # None (not IDLE) so the first _set_state(IDLE) actually fires and forces
@@ -94,6 +96,9 @@ class Orchestrator:
             await self.media.start()
         if self._conn_manager is not None:
             await self._conn_manager.start()
+        if self._arbitrator is not None:
+            with contextlib.suppress(Exception):
+                await self._arbitrator.start()
         try:
             async with self.audio:
                 await self._set_state(LedState.IDLE)
@@ -102,6 +107,8 @@ class Orchestrator:
                     wake = await self._wait_for_wake()
                     if wake is None:
                         break
+                    if not await self._arbitrate(wake):
+                        continue  # a louder peer is taking this one; stay idle
                     try:
                         await self._converse(wake)
                     except Exception as exc:
@@ -111,6 +118,9 @@ class Orchestrator:
                 await self._set_state(LedState.IDLE)
                 log.info("orchestrator_stopped")
         finally:
+            if self._arbitrator is not None:
+                with contextlib.suppress(Exception):
+                    await self._arbitrator.stop()
             if self._conn_manager is not None:
                 with contextlib.suppress(Exception):
                     await self._conn_manager.stop()
@@ -130,6 +140,24 @@ class Orchestrator:
                 break
         self.wake.reset()
         log.debug("post_close_settle_done", grace_s=grace)
+
+    async def _arbitrate(self, wake: WakeEvent) -> bool:
+        """Ask the multi-device arbitrator whether we should handle this wake.
+
+        No arbitrator (single device / disabled) ⇒ always handle. On any error we
+        fail open and handle, so arbitration can never swallow a wake outright.
+        """
+        if self._arbitrator is None:
+            return True
+        try:
+            if await self._arbitrator.should_handle(wake):
+                return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("arbitration_error_handling_anyway", error=str(exc))
+            return True
+        log.info("wake_suppressed_by_peer", model=wake.model)
+        self.wake.reset()
+        return False
 
     async def _wait_for_wake(self) -> WakeEvent | None:
         log.info("idle_listening")

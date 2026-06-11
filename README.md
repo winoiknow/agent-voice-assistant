@@ -182,6 +182,28 @@ falls back to an inline connect, so it never regresses. Logs `warm_connection_re
 / `realtime_using_warm_connection`. **Single device only** — the s2s server allows
 one concurrent session.
 
+## Multi-device wake arbitration
+
+When several units are within earshot, you don't want them all answering one wake
+word. Turn on `arbitration.enabled` and give the units the same `community` string:
+on wake, each unit broadcasts a tiny UDP message — `{community, device_id, ts,
+strength}` where **strength = wake score + the wake's audio energy (RMS)** — collects
+peers' announcements for `window_ms`, and the **strongest (closest/loudest) wins**
+(ties broken by `device_id`, so every unit agrees). The rest suppress and stay idle.
+
+Periodic presence beacons let a unit know whether any peers exist, so a **solo unit
+answers immediately** — the arbitration window only costs latency when peers are
+actually present. Correlating "the same wake" across units leans on the shared clock,
+so keep chrony/NTP in sync (you already need it for media). It fails *open*: any error
+or no peers ⇒ handle the wake. Disabled by default.
+
+Verify two units see each other on the LAN before relying on it:
+
+```bash
+voiceagent arbitration-test -s 30      # run on each unit; they should list each
+                                       # other as peers and trade synthetic wakes
+```
+
 ## Development
 
 ```bash

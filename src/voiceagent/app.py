@@ -47,8 +47,16 @@ class App:
 
             conn_manager = WarmConnectionManager(self.settings.realtime)
             log.info("warm_connection_enabled")
+        arbitrator = None
+        if self.settings.arbitration.enabled:
+            from voiceagent.arbitration import UdpBroadcastTransport, WakeArbitrator
+
+            arb = self.settings.arbitration
+            transport = UdpBroadcastTransport(arb.port, arb.broadcast_address)
+            arbitrator = WakeArbitrator(arb, transport, device_id=self.settings.device.name)
+            log.info("arbitration_enabled", community=arb.community)
         return Orchestrator(self.settings, audio, wake, led, media=media,
-                            conn_manager=conn_manager)
+                            conn_manager=conn_manager, arbitrator=arbitrator)
 
     async def run(self) -> None:
         """Build subsystems and run the orchestrator until shutdown."""

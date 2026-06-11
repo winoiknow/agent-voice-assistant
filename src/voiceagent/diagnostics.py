@@ -182,3 +182,52 @@ async def run_respeaker_tune(settings: Settings) -> dict[str, object]:
         "readback": readback,
         "saved": settings.respeaker.save_to_flash and bool(tuning),
     }
+
+
+async def run_arbitration_test(settings: Settings, *, seconds: float = 20.0) -> dict[str, object]:
+    """Exercise multi-device wake arbitration over the real UDP broadcast wire.
+
+    Forces the arbitrator on (regardless of ``arbitration.enabled``) so two devices
+    on a LAN can confirm they see each other: it joins the configured community,
+    prints peers it discovers, and every few seconds fires a synthetic wake of
+    random loudness and reports whether this unit would win it.
+    """
+    import random
+    from array import array
+
+    from voiceagent.arbitration import UdpBroadcastTransport, WakeArbitrator, wake_strength
+    from voiceagent.wakeword.base import WakeEvent
+
+    arb = settings.arbitration
+    transport = UdpBroadcastTransport(arb.port, arb.broadcast_address)
+    arbitrator = WakeArbitrator(arb, transport, device_id=settings.device.name)
+    await arbitrator.start()
+    log.info("arbitration_test_started", device_id=arbitrator.device_id,
+             community=arb.community, port=arb.port)
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    probes = wins = 0
+    try:
+        while loop.time() < deadline:
+            await asyncio.sleep(min(3.0, max(0.0, deadline - loop.time())))
+            if loop.time() >= deadline:
+                break
+            amp = random.randint(2000, 30000)
+            pcm = array("h", [amp, -amp] * 400).tobytes()
+            event = WakeEvent("diag", 0.9, pcm, settings.audio.capture_rate)
+            won = await arbitrator.should_handle(event)
+            probes += 1
+            wins += int(won)
+            log.info("arbitration_probe", strength=round(wake_strength(event), 3),
+                     won=won, peers=arbitrator.peers())
+    finally:
+        peers = arbitrator.peers()
+        await arbitrator.stop()
+    return {
+        "device_id": arbitrator.device_id,
+        "community": arb.community,
+        "probes": probes,
+        "wins": wins,
+        "peers": peers,
+    }
