@@ -110,6 +110,62 @@ Precedence: **env > YAML file > defaults**. Secrets (`realtime.api_key`,
 The config file path is chosen by `--config PATH`, else `VA_CONFIG`, else
 `./config.yaml`, else `/etc/voiceagent/config.yaml`.
 
+## How a turn works (wake → reply)
+
+1. **Wake word** fires → LED ring shows a **pulsing-blue "connecting"** cue and any
+   playing music is ducked.
+2. The realtime connection is opened and the **instructions prompt is sent first**
+   to warm it up. The prompt should end with a line telling the model *not* to reply
+   yet, e.g. *"…Do not reply to this prompt; the next instruction is the user request."*
+   The **wake word itself is never streamed to the model.**
+3. Once the connection is live, the **`acknowledge.wav` earcon plays** and the LED
+   turns **green ("speak now")** — only then does the mic start streaming your request.
+4. Normal turn-taking follows (listening ⇄ thinking ⇄ speaking), with a follow-up
+   window for multi-turn, closing on a closer phrase (e.g. "goodbye") or timeout.
+
+This is controlled by `realtime.warmup_handshake` (default on) and the
+`wakeword.wake_sound` earcon (the installer points it at the bundled
+`assets/acknowledge.wav`).
+
+## Operation & troubleshooting
+
+**Manage the service**
+
+```bash
+systemctl --user status voiceagent
+systemctl --user restart voiceagent
+systemctl --user stop voiceagent          # stops cleanly in ~2-3 s (see below)
+journalctl --user -u voiceagent -f        # follow logs (state= lines track the turn)
+```
+
+The state machine logs each transition as `state value=<idle|engaging|listening|
+thinking|speaking>`; following the log is the quickest way to see where a turn is.
+
+**A turn hangs in `thinking` (LED stuck pulsing blue).** If the s2s server accepts
+the connection but never produces a response, the turn no longer hangs forever: a
+**watchdog** (`realtime.turn_watchdog_s`, default 30 s — must exceed the server's
+worst-case first-token latency) aborts the turn, plays the error earcon, and returns
+to idle. If you see `turn_watchdog_fired` in the log, the **server stalled**, not the
+device — check the speech2speech server. Lower the value for faster recovery, raise it
+if the server is legitimately slow.
+
+**The service won't stop / `systemctl stop` hangs.** The app now shuts down
+gracefully on `SIGTERM`, interrupting an in-flight (or stalled) turn, so stop
+completes in a couple of seconds. The unit also sets `TimeoutStopSec=15` and
+`KillMode=mixed` as a backstop. A clean stop logs `orchestrator_stopped → audio_stopped
+→ sendspin_stopped → stopped`.
+
+**Audio output flips to HDMI/another card after a reboot.** PulseAudio's
+`module-switch-on-connect` grabs whichever sink appears first at boot. The installer
+pins the XVF3800 as the default sink/source via `~/.config/pulse/default.pa`
+(`# voiceagent-managed`) and unloads that module. To re-pin manually after hardware
+changes, re-run `install.sh`, or delete that file to manage PulseAudio yourself.
+Verify with `pactl get-default-sink` / `pactl get-default-source`.
+
+**Rapid close→re-wake misbehaves.** After a turn closes, the mic keeps flowing for
+`realtime.post_close_grace_s` (default 2.5 s, wake detection suppressed) so the
+XVF3800 AEC re-converges after music resume before the next wake is honored.
+
 ## Development
 
 ```bash

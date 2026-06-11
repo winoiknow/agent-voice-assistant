@@ -78,8 +78,19 @@ class RealtimeConfig(_StrictModel):
     server_vad: bool = True
     interrupt_response: bool = True
 
+    # Warm-up handshake: on wake, open the connection and send the instructions
+    # prompt first (the prompt should end telling the model not to reply yet);
+    # the mic is streamed only after the acknowledge earcon, so the wake word
+    # itself is never sent to the model. False = stream immediately (legacy).
+    warmup_handshake: bool = True
+
     # Conversation lifecycle.
     follow_up_window_s: float = 8.0
+    # Abort a turn if the s2s server sends no progress (audio/transcript/response)
+    # for this long while we await it, instead of hanging in THINKING forever —
+    # recovers to a fail-safe earcon + IDLE. Must exceed the worst-case first-token
+    # latency (~14 s server-side). 0 disables the watchdog.
+    turn_watchdog_s: float = 30.0
     # After a conversation closes, ignore wake detection for this long while the
     # mic keeps flowing — lets the XVF3800 AEC re-converge after music resumes so
     # the resume transient doesn't false-trigger the wake word.

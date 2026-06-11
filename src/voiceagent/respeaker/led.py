@@ -42,8 +42,12 @@ class LedController:
         """Return (effect, color) for a state, or None for 'off'."""
         if state in (LedState.IDLE,):
             return None
-        if state in (LedState.ENGAGING, LedState.LISTENING):
-            # Target motion/flash not in firmware -> nearest steady green.
+        if state is LedState.ENGAGING:
+            # Warming up the connection — "please wait", not "speak now". Pulsing
+            # blue (same family as THINKING); green is reserved for LISTENING.
+            return (LedEffect.BREATH, self.cfg.think_color)
+        if state is LedState.LISTENING:
+            # "Speak now." Target motion/flash not in firmware -> nearest steady green.
             return (LedEffect.SINGLE, self.cfg.listen_color)
         if state is LedState.THINKING:
             return (LedEffect.BREATH, self.cfg.think_color)  # exact: pulsing

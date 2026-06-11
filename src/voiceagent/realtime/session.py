@@ -88,13 +88,23 @@ class RealtimeSession:
         self._on_event = on_event
         self.preroll = preroll
         self._stop = asyncio.Event()
+        # Closed during the warm-up handshake: the send loop holds mic streaming
+        # until begin_listening() opens it (after the acknowledge earcon), so the
+        # wake word still in the capture pipeline is never sent to the model.
+        self._listen_gate = asyncio.Event()
+        self._connected = False  # emit "connected" once, on the first session event
 
     def _emit(self, kind: str, **data: Any) -> None:
         if self._on_event is not None:
             self._on_event({"kind": kind, **data})
 
+    def begin_listening(self) -> None:
+        """Release the warm-up gate: start streaming the user's request."""
+        self._listen_gate.set()
+
     def stop(self) -> None:
         self._stop.set()
+        self._listen_gate.set()  # unblock a send loop still waiting on warm-up
 
     # ── public entry: open the openai connection and run ─────────
     async def run(self, *, duration_s: float | None = None) -> None:
@@ -124,19 +134,15 @@ class RealtimeSession:
         self, conn: RealtimeConnection, *, duration_s: float | None = None
     ) -> None:
         self._stop.clear()
+        self._connected = False
+        if not self.cfg.warmup_handshake:
+            self._listen_gate.set()  # legacy path: stream immediately
+        else:
+            self._listen_gate.clear()
+        # Send the instructions / session config first. With warm-up enabled this
+        # is the only thing on the wire until begin_listening() — it "fires up" the
+        # connection while the recv loop waits for session.created.
         await conn.send(build_session_update(self.cfg))
-        await self.audio.play_stream_start(AudioFormat(self.playback_rate, 1))
-        # Discard mic audio buffered during connect so the turn starts fresh.
-        self.audio.drain_capture()
-        # Seed the wake-word pre-roll so the user's first words aren't clipped.
-        if self.preroll:
-            pcm = resample_pcm16(self.preroll, self.capture_rate, self.wire_rate)
-            await conn.send(
-                {
-                    "type": "input_audio_buffer.append",
-                    "audio": base64.b64encode(pcm).decode("ascii"),
-                }
-            )
 
         send_task = asyncio.create_task(self._send_loop(conn))
         recv_task = asyncio.create_task(self._recv_loop(conn))
@@ -147,12 +153,32 @@ class RealtimeSession:
             await asyncio.wait(tasks, timeout=duration_s, return_when=asyncio.FIRST_COMPLETED)
         finally:
             self._stop.set()
+            self._listen_gate.set()
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await self.audio.play_stream_stop()
 
     async def _send_loop(self, conn: RealtimeConnection) -> None:
+        # Warm-up gate: hold until the orchestrator has played the acknowledge
+        # earcon and called begin_listening(). The wake word still sitting in the
+        # capture buffer is thereby never streamed to the model.
+        await self._listen_gate.wait()
+        if self._stop.is_set():
+            return
+        await self.audio.play_stream_start(AudioFormat(self.playback_rate, 1))
+        # Discard everything captured during connect + the earcon so the turn
+        # starts on the user's first fresh word.
+        self.audio.drain_capture()
+        # Optional pre-roll seed (normally empty: we no longer send the wake word).
+        if self.preroll:
+            pcm = resample_pcm16(self.preroll, self.capture_rate, self.wire_rate)
+            await conn.send(
+                {
+                    "type": "input_audio_buffer.append",
+                    "audio": base64.b64encode(pcm).decode("ascii"),
+                }
+            )
         async for frame in self.audio.capture_stream():
             if self._stop.is_set():
                 break
@@ -179,8 +205,13 @@ class RealtimeSession:
 
     def _handle_event(self, event: Any) -> None:
         etype = _attr(event, "type", "")
-        if etype == "session.created":
-            self._emit("connected")
+        if etype in ("session.created", "session.updated"):
+            # Either marks the connection as live/ready; emit once so the
+            # orchestrator can release the warm-up gate regardless of which the
+            # s2s server sends first.
+            if not self._connected:
+                self._connected = True
+                self._emit("connected")
         elif etype == "input_audio_buffer.speech_started":
             # Barge-in: cut local playback immediately.
             self.audio.play_stream_clear()

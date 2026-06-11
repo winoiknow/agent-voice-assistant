@@ -27,14 +27,24 @@ realtime:
   # api_key: "your-server-api-key"   # only if the s2s server sets SERVER_API_KEY
   native_16k: false          # false = declare OpenAI-standard 24 kHz (recommended);
                              # true  = 16 kHz native fast-path (this server only)
+  # With warmup_handshake on, this prompt is sent first to fire up the connection;
+  # end it telling the model NOT to reply yet (the next input is the user request).
   instructions: |
     You are a far-field voice assistant running on a small device in the
     {room}. The user speaks to you hands-free and hears your replies aloud, so
     keep responses concise and conversational. Avoid markdown and long lists.
+    Do not reply to this prompt; the next instruction is the user request.
   voice: null                # TTS voice id understood by the s2s server
   server_vad: true
   interrupt_response: true   # allow barge-in
+  warmup_handshake: true     # send instructions + ack earcon BEFORE streaming the
+                             # mic, so the wake word is never sent to the model
   follow_up_window_s: 8.0    # keep the session warm this long for follow-ups
+  turn_watchdog_s: 30.0      # abort a turn if the server sends no progress for this
+                             # long (recover instead of hanging in 'thinking'); 0=off.
+                             # Must exceed the server's worst-case first-token latency.
+  post_close_grace_s: 2.5    # after close, ignore wake this long while the mic flows
+                             # so the XVF3800 AEC re-converges (avoids resume false-wake)
   connect_timeout_s: 10.0
   reconnect_initial_backoff_s: 0.5
   reconnect_max_backoff_s: 30.0
@@ -81,7 +91,8 @@ wakeword:
   vad_threshold: 0.0         # >0 enables openWakeWord's VAD gate (fewer false fires)
   cooldown_s: 2.0
   preroll_s: 0.5
-  wake_sound: null           # path to a 16-bit PCM .wav played once on wake
+  wake_sound: null           # acknowledge earcon: a 16-bit PCM .wav played when
+                             # listening begins (installer sets assets/acknowledge.wav)
   mock_trigger_rms: 1500.0   # mock engine: fire when frame RMS exceeds this
 
 # ── media: sendspin player + Home Assistant / Music Assistant ───────────────

@@ -107,7 +107,9 @@ def build_config(
     return config, secrets
 
 
-def collect_answers(default_model: str, *, input_fn: InputFn) -> dict[str, Any]:
+def collect_answers(
+    default_model: str, *, default_wake_sound: str = "", input_fn: InputFn
+) -> dict[str, Any]:
     a: dict[str, Any] = {}
     a["device_name"] = _ask("Device name", socket.gethostname(), input_fn=input_fn)
     a["room"] = _ask("Room (for the prompt, optional)", input_fn=input_fn)
@@ -121,7 +123,9 @@ def collect_answers(default_model: str, *, input_fn: InputFn) -> dict[str, Any]:
     a["wakeword_model"] = _ask(
         "Wake-word model (name or .onnx path)", default_model, input_fn=input_fn
     )
-    a["wake_sound"] = _ask("Wake confirmation .wav path (optional)", input_fn=input_fn)
+    a["wake_sound"] = _ask(
+        "Acknowledge .wav played when listening starts", default_wake_sound, input_fn=input_fn
+    )
     a["pulse_default"] = _ask_bool(
         "Capture/play via PulseAudio 'default' (recommended on a desktop/pulse SBC)",
         True, input_fn=input_fn,
@@ -137,7 +141,9 @@ def collect_answers(default_model: str, *, input_fn: InputFn) -> dict[str, Any]:
         "Control music via Home Assistant (pause/duck)?", True, input_fn=input_fn
     )
     if a["ha_enabled"]:
-        a["ha_base_url"] = _ask("Home Assistant base URL", "https://ha.anteon.group", input_fn=input_fn)
+        a["ha_base_url"] = _ask(
+            "Home Assistant base URL", "https://ha.anteon.group", input_fn=input_fn
+        )
         a["ha_token"] = _ask("HA long-lived token (blank if already set)", input_fn=input_fn)
         a["ha_entity"] = _ask(
             "HA media_player entity id",
@@ -165,13 +171,17 @@ def run_wizard(
     secrets_path: Path,
     xvf_host_path: str,
     default_model: str = "alexa",
+    default_wake_sound: str = "",
     input_fn: InputFn = input,
     force: bool = False,
 ) -> tuple[dict[str, Any], dict[str, str]]:
-    if config_path.exists() and not force:
-        if not _ask_bool(f"{config_path} exists. Overwrite?", False, input_fn=input_fn):
-            raise SystemExit("Keeping existing config; aborting wizard.")
-    answers = collect_answers(default_model, input_fn=input_fn)
+    if config_path.exists() and not force and not _ask_bool(
+        f"{config_path} exists. Overwrite?", False, input_fn=input_fn
+    ):
+        raise SystemExit("Keeping existing config; aborting wizard.")
+    answers = collect_answers(
+        default_model, default_wake_sound=default_wake_sound, input_fn=input_fn
+    )
     config, secrets = build_config(answers, xvf_host_path=xvf_host_path)
     # Secrets are optional fields, so the config validates on its own.
     try:

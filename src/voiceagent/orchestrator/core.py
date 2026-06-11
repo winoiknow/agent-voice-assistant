@@ -30,9 +30,14 @@ log = get_logger("orchestrator")
 _SENTINEL = object()
 
 
+class _StalledTurn(Exception):
+    """The s2s server went silent mid-turn; recover via the fail-safe path."""
+
+
 class Conversation(Protocol):
     async def run(self) -> None: ...
     def stop(self) -> None: ...
+    def begin_listening(self) -> None: ...
 
 
 # Factory: given an event callback and the wake pre-roll, build a Conversation.
@@ -65,9 +70,17 @@ class Orchestrator:
         # None (not IDLE) so the first _set_state(IDLE) actually fires and forces
         # the ring off — clearing any effect a previously killed run left set.
         self._state: LedState | None = None
+        # The conversation in flight, so shutdown can interrupt it mid-turn.
+        self._active_conv: Conversation | None = None
 
     def request_shutdown(self) -> None:
         self._shutdown.set()
+        # Break out of an in-flight turn so SIGTERM doesn't wait for it (or, worse,
+        # for a hung turn) — otherwise systemd's stop timeout escalates to SIGKILL.
+        conv = self._active_conv
+        if conv is not None:
+            with contextlib.suppress(Exception):
+                conv.stop()
 
     # ── main loop ────────────────────────────────────────────────
     async def run(self) -> None:
@@ -121,32 +134,60 @@ class Orchestrator:
     # ── one conversation ─────────────────────────────────────────
     async def _converse(self, wake: WakeEvent) -> None:
         events: asyncio.Queue[Any] = asyncio.Queue()
-        conv = self._factory(events.put_nowait, wake.preroll)
+        # We no longer hand the model the wake-word pre-roll: with the warm-up
+        # handshake the user speaks fresh after the acknowledge earcon.
+        conv = self._factory(events.put_nowait, b"")
+        self._active_conv = conv
 
         await self._engage()
         run_task = asyncio.create_task(conv.run())
         run_task.add_done_callback(lambda _t: events.put_nowait(_SENTINEL))
 
         loop = asyncio.get_running_loop()
-        deadline: float | None = None
+        watchdog_s = self.settings.realtime.turn_watchdog_s
+        followup_deadline: float | None = None
+        watchdog_deadline: float | None = loop.time() + watchdog_s if watchdog_s > 0 else None
+        listening = False
+        stalled = False
         try:
             while True:
-                timeout = None if deadline is None else max(0.0, deadline - loop.time())
+                deadlines = [d for d in (followup_deadline, watchdog_deadline) if d is not None]
+                timeout = None if not deadlines else max(0.0, min(deadlines) - loop.time())
                 try:
                     event = await asyncio.wait_for(events.get(), timeout=timeout)
                 except TimeoutError:
-                    log.info("followup_window_elapsed")
+                    now = loop.time()
+                    if followup_deadline is not None and now >= followup_deadline:
+                        log.info("followup_window_elapsed")
+                        conv.stop()
+                        followup_deadline = None
+                        continue
+                    log.warning("turn_watchdog_fired", waited_s=watchdog_s)
+                    stalled = True
                     conv.stop()
-                    deadline = None
-                    continue
+                    break
                 if event is _SENTINEL:
                     break
-                deadline = await self._apply_event(event, conv, deadline)
+                if watchdog_s > 0:  # any inbound activity is progress
+                    watchdog_deadline = loop.time() + watchdog_s
+                kind = event.get("kind")
+                if not listening and kind != "error":
+                    # First sign the connection is live (normally "connected"):
+                    # acknowledge, go green, and release the mic. Robust to which
+                    # session event the s2s server sends first.
+                    listening = True
+                    await self._begin_listening(conv)
+                    if kind == "connected":
+                        continue
+                followup_deadline = await self._apply_event(event, conv, followup_deadline)
         finally:
             conv.stop()
+            self._active_conv = None
         # Re-raise a conversation failure (e.g. connection error) so run() can run
-        # the fail-safe; otherwise close cleanly.
+        # the fail-safe; a stall recovers the same way; otherwise close cleanly.
         await run_task
+        if stalled:
+            raise _StalledTurn("no response from s2s within the turn watchdog window")
         await self._close()
 
     async def _apply_event(
@@ -178,14 +219,24 @@ class Orchestrator:
 
     # ── feedback + lifecycle ─────────────────────────────────────
     async def _engage(self) -> None:
+        # Wake fired: show "connecting" (not green yet) and free the player while
+        # the realtime connection warms up in the background. The acknowledge
+        # earcon + green LED come in _begin_listening once the connection is up.
         await self._set_state(LedState.ENGAGING)
         if self.media is not None:
             with contextlib.suppress(Exception):
                 await self.media.on_turn_start()
+
+    async def _begin_listening(self, conv: Conversation) -> None:
+        # Connection is warmed up: acknowledge audibly, go green ("speak now"),
+        # then release the mic so the user's request — not the wake word — is sent.
         sound = self.settings.wakeword.wake_sound
         if sound:
             with contextlib.suppress(Exception):
                 await self.audio.play_wav(sound)
+        await self._set_state(LedState.LISTENING)
+        with contextlib.suppress(Exception):
+            conv.begin_listening()
 
     async def _close(self) -> None:
         if self.media is not None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from array import array
 from types import SimpleNamespace
@@ -86,7 +87,7 @@ def _evt(type_: str, **kw: Any) -> SimpleNamespace:
 async def test_session_loop_handles_events_and_barge_in() -> None:
     # native_16k => no resampling so the loop needs no numpy/scipy.
     io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512, max_frames=2)
-    cfg = RealtimeConfig(native_16k=True)
+    cfg = RealtimeConfig(native_16k=True, warmup_handshake=False)  # stream immediately
     audio_pcm = b"\x10\x00" * 320
     events = [
         _evt("session.created"),
@@ -117,6 +118,36 @@ async def test_session_loop_handles_events_and_barge_in() -> None:
     assert io.stream_clears == 1
     # session.update was sent first, then mic frames appended.
     assert conn.sent[0]["type"] == "session.update"
+    assert any(s["type"] == "input_audio_buffer.append" for s in conn.sent)
+
+
+class HoldConn(FakeConn):
+    """Like FakeConn but the recv side blocks (connection stays open) once the
+    scripted events are drained, so the send/warm-up path drives completion."""
+
+    async def recv(self) -> Any:
+        if self._events:
+            return self._events.pop(0)
+        await asyncio.Event().wait()  # block forever
+
+
+async def test_warmup_handshake_gates_mic_until_begin_listening() -> None:
+    # With the warm-up handshake on, session.update goes out but no mic audio is
+    # streamed until begin_listening() — so the wake word is never sent.
+    io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512, max_frames=2)
+    cfg = RealtimeConfig(native_16k=True, warmup_handshake=True)
+    sess = RealtimeSession(cfg, io, capture_rate=16000, playback_rate=16000)
+    conn = HoldConn([_evt("session.created")])
+    async with io:
+        run = asyncio.create_task(sess.run_with_connection(conn, duration_s=2.0))
+        await asyncio.sleep(0.05)
+        # Connection warmed up: session.update sent, but mic still gated.
+        assert conn.sent and conn.sent[0]["type"] == "session.update"
+        assert not any(s["type"] == "input_audio_buffer.append" for s in conn.sent)
+        assert not io.stream_open  # playback stream opens only once listening
+        sess.begin_listening()
+        await run
+    # After begin_listening the mic streamed and the playback stream was opened.
     assert any(s["type"] == "input_audio_buffer.append" for s in conn.sent)
 
 

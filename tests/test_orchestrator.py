@@ -64,6 +64,7 @@ class FakeConversation:
         self._hold = hold
         self._raise = raise_exc
         self._stop = asyncio.Event()
+        self.listening = False
 
     async def run(self) -> None:
         if self._raise is not None:
@@ -75,6 +76,9 @@ class FakeConversation:
             await asyncio.sleep(0)
         if self._hold:
             await self._stop.wait()
+
+    def begin_listening(self) -> None:
+        self.listening = True
 
     def stop(self) -> None:
         self._stop.set()
@@ -158,4 +162,83 @@ async def test_conversation_error_triggers_failsafe(tmp_path: Path) -> None:
     await asyncio.wait_for(orch.run(), timeout=3.0)
     # fail-safe played the error earcon and ended idle.
     assert io.total_played_bytes > 0
+    assert led.states[-1] is LedState.IDLE
+
+
+def _wav(path: Path) -> str:
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(16000)
+        wf.writeframes(b"\x00\x01" * 64)
+    return str(path)
+
+
+async def test_warmup_acks_and_listens_on_connected(tmp_path: Path) -> None:
+    # On "connected" the orchestrator plays the acknowledge earcon, goes green,
+    # and releases the conversation's mic gate — the wake word is never streamed.
+    ack = _wav(tmp_path / "ack.wav")
+    settings = _settings(wakeword={"engine": "mock", "wake_sound": ack})
+    io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512, max_frames=2)
+    led = RecordingLed()
+    convs: list[FakeConversation] = []
+
+    def factory(on_event: Any, preroll: bytes) -> FakeConversation:
+        c = FakeConversation(on_event, [
+            {"kind": "connected"},
+            {"kind": "response_done", "status": "completed"},
+        ], hold=True)
+        convs.append(c)
+        return c
+
+    orch = Orchestrator(settings, io, OneShotWake(), led, conversation_factory=factory)  # type: ignore[arg-type]
+    await asyncio.wait_for(orch.run(), timeout=3.0)
+    assert convs[0].listening is True  # begin_listening() was called
+    assert io.total_played_bytes > 0  # acknowledge earcon played
+    # ENGAGING (connecting) precedes LISTENING (speak now).
+    assert led.states.index(LedState.ENGAGING) < led.states.index(LedState.LISTENING)
+    assert led.states[-1] is LedState.IDLE
+
+
+async def test_watchdog_aborts_stalled_turn(tmp_path: Path) -> None:
+    # A turn that produces no events (s2s went silent) must not hang: the watchdog
+    # fires, the fail-safe earcon plays, and we return to idle.
+    earcon = _wav(tmp_path / "err.wav")
+    settings = _settings(
+        feedback={"error_sound": earcon},
+        realtime={"turn_watchdog_s": 0.2, "follow_up_window_s": 0.15,
+                  "post_close_grace_s": 0.0},
+    )
+    io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512, max_frames=2)
+    led = RecordingLed()
+
+    def factory(on_event: Any, preroll: bytes) -> FakeConversation:
+        return FakeConversation(on_event, [], hold=True)  # never emits anything
+
+    orch = Orchestrator(settings, io, OneShotWake(), led, conversation_factory=factory)  # type: ignore[arg-type]
+    await asyncio.wait_for(orch.run(), timeout=3.0)
+    assert io.total_played_bytes > 0  # fail-safe earcon played
+    assert led.states[-1] is LedState.IDLE
+
+
+async def test_shutdown_interrupts_active_turn() -> None:
+    # SIGTERM mid-turn must stop the conversation and exit, not wait it out.
+    settings = _settings(realtime={"turn_watchdog_s": 0, "follow_up_window_s": 99,
+                                   "post_close_grace_s": 0.0})
+    io = MockAudioIO(AudioFormat(16000), AudioFormat(16000), frame_samples=512,
+                     frame_interval_s=0.01)
+    led = RecordingLed()
+    convs: list[FakeConversation] = []
+
+    def factory(on_event: Any, preroll: bytes) -> FakeConversation:
+        c = FakeConversation(on_event, [{"kind": "connected"}], hold=True)
+        convs.append(c)
+        return c
+
+    orch = Orchestrator(settings, io, OneShotWake(), led, conversation_factory=factory)  # type: ignore[arg-type]
+    run_task = asyncio.create_task(orch.run())
+    await asyncio.sleep(0.1)  # let it wake and enter the conversation
+    orch.request_shutdown()
+    await asyncio.wait_for(run_task, timeout=3.0)
+    assert convs[0]._stop.is_set()  # conversation was told to stop
     assert led.states[-1] is LedState.IDLE

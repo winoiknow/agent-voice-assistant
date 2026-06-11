@@ -87,6 +87,9 @@ def _build_parser() -> argparse.ArgumentParser:
     init_p.add_argument("--secrets", default=None, help="secrets env output path.")
     init_p.add_argument("--xvf-host-path", default="xvf_host", help="Path to the xvf_host binary.")
     init_p.add_argument("--default-model", default="alexa", help="Default wake-word model.")
+    init_p.add_argument(
+        "--ack-sound", default="", help="Default acknowledge .wav played when listening starts."
+    )
     init_p.add_argument("--force", action="store_true", help="Overwrite existing config.")
 
     return parser
@@ -195,6 +198,7 @@ def _cmd_init(args: argparse.Namespace) -> int:
         secrets_path=secrets_path,
         xvf_host_path=args.xvf_host_path,
         default_model=args.default_model,
+        default_wake_sound=args.ack_sound,
         force=args.force,
     )
     print(f"\nWrote {config_path}")
