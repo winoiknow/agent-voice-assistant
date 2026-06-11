@@ -143,11 +143,18 @@ thinking|speaking>`; following the log is the quickest way to see where a turn i
 
 **A turn hangs in `thinking` (LED stuck pulsing blue).** If the s2s server accepts
 the connection but never produces a response, the turn no longer hangs forever: a
-**watchdog** (`realtime.turn_watchdog_s`, default 30 s — must exceed the server's
-worst-case first-token latency) aborts the turn, plays the error earcon, and returns
-to idle. If you see `turn_watchdog_fired` in the log, the **server stalled**, not the
-device — check the speech2speech server. Lower the value for faster recovery, raise it
-if the server is legitimately slow.
+**watchdog** (`realtime.turn_watchdog_s`, default 75 s) aborts the turn, plays the
+error earcon, and returns to idle (`turn_watchdog_fired` in the log).
+
+The whole stretch from the user finishing to the first audio is **silent on the wire**
+— STT, then the Hermes agent's LLM/tool loop (tools run *inside* the agent, so their
+latency is invisible to the client), then TTS. The s2s server emits `response.created`
+only on the first audio chunk, so a long agent turn looks identical to a dead one. The
+watchdog must therefore exceed your backend's *entire* response envelope; tool-free
+turns already run ~25–30 s, so keep it generous. The proper fix is **server-side**: have
+s2s (or the Hermes adapter) emit an early `response.created`/in-progress or a periodic
+keepalive during the gap, so the client can both refresh the watchdog and show honest
+"working" feedback — then this can be tightened again.
 
 **The service won't stop / `systemctl stop` hangs.** The app now shuts down
 gracefully on `SIGTERM`, interrupting an in-flight (or stalled) turn, so stop
@@ -165,6 +172,15 @@ Verify with `pactl get-default-sink` / `pactl get-default-source`.
 **Rapid close→re-wake misbehaves.** After a turn closes, the mic keeps flowing for
 `realtime.post_close_grace_s` (default 2.5 s, wake detection suppressed) so the
 XVF3800 AEC re-converges after music resume before the next wake is honored.
+
+**Wake→reply feels slow on the first wake after idle.** Opening the s2s connection
+costs ~5 s cold. Set `realtime.warm_connection: true` to keep one connection warm
+during idle: a wake then reuses it (skipping the connect) and it's recycled on close
+and re-opened in the background, so each wake-session still gets a fresh conversation.
+If the warm connection isn't ready (a rapid re-wake while it's re-warming) the turn
+falls back to an inline connect, so it never regresses. Logs `warm_connection_ready`
+/ `realtime_using_warm_connection`. **Single device only** — the s2s server allows
+one concurrent session.
 
 ## Development
 

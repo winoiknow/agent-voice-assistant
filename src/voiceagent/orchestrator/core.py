@@ -28,6 +28,10 @@ from voiceagent.wakeword.base import WakeDetector, WakeEvent
 log = get_logger("orchestrator")
 
 _SENTINEL = object()
+# How long a wake will wait for the warm connection before falling back to an
+# inline connect. Normally the connection is already warm so acquire is instant;
+# this only bounds the rare mid-re-warm (rapid re-wake) case.
+_WARM_ACQUIRE_TIMEOUT_S = 1.0
 
 
 class _StalledTurn(Exception):
@@ -59,12 +63,14 @@ class Orchestrator:
         *,
         media: Any = None,
         conversation_factory: ConversationFactory | None = None,
+        conn_manager: Any = None,
     ) -> None:
         self.settings = settings
         self.audio = audio_io
         self.wake = wake_detector
         self.led = led
         self.media = media
+        self._conn_manager = conn_manager
         self._factory = conversation_factory or self._default_factory
         self._shutdown = asyncio.Event()
         # None (not IDLE) so the first _set_state(IDLE) actually fires and forces
@@ -86,6 +92,8 @@ class Orchestrator:
     async def run(self) -> None:
         if self.media is not None:
             await self.media.start()
+        if self._conn_manager is not None:
+            await self._conn_manager.start()
         try:
             async with self.audio:
                 await self._set_state(LedState.IDLE)
@@ -103,6 +111,9 @@ class Orchestrator:
                 await self._set_state(LedState.IDLE)
                 log.info("orchestrator_stopped")
         finally:
+            if self._conn_manager is not None:
+                with contextlib.suppress(Exception):
+                    await self._conn_manager.stop()
             if self.media is not None:
                 await self.media.stop()
 
@@ -206,6 +217,10 @@ class Orchestrator:
         elif kind == "response_done":
             await self._set_state(LedState.LISTENING)
             return loop.time() + self.settings.realtime.follow_up_window_s
+        elif kind == "tool_call":
+            # Visible only if s2s forwards it; tools that run inside the Hermes
+            # agent stay invisible (their latency is part of the THINKING gap).
+            log.info("tool_call", name=event.get("name"))
         elif kind == "user_transcript" and event.get("final"):
             if is_closer(event.get("text", ""), self.settings.realtime.closer_phrases):
                 log.info("closer_detected", text=event.get("text", ""))
@@ -273,6 +288,14 @@ class Orchestrator:
                 room=self.settings.device.room or "the room",
             )
             rt = rt.model_copy(update={"instructions": rt.instructions.format_map(ctx)})
+        acquire = release = None
+        if self._conn_manager is not None:
+            mgr = self._conn_manager
+
+            async def acquire() -> Any:
+                return await mgr.acquire(_WARM_ACQUIRE_TIMEOUT_S)
+
+            release = mgr.release
         return RealtimeSession(
             rt,
             self.audio,
@@ -280,4 +303,6 @@ class Orchestrator:
             playback_rate=self.settings.audio.playback_rate,
             on_event=on_event,
             preroll=preroll,
+            acquire=acquire,
+            release=release,
         )

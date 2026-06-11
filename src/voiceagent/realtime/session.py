@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
 
 from voiceagent.audio.base import AudioIO
@@ -24,6 +24,8 @@ log = get_logger("realtime.session")
 
 STANDARD_WIRE_RATE = 24000  # OpenAI Realtime standard
 EventCallback = Callable[[dict[str, Any]], None]
+AcquireConnection = Callable[[], "Awaitable[RealtimeConnection | None]"]
+ReleaseConnection = Callable[[], "Awaitable[None]"]
 
 
 def wire_rate(cfg: RealtimeConfig) -> int:
@@ -79,6 +81,8 @@ class RealtimeSession:
         playback_rate: int,
         on_event: EventCallback | None = None,
         preroll: bytes = b"",
+        acquire: AcquireConnection | None = None,
+        release: ReleaseConnection | None = None,
     ) -> None:
         self.cfg = cfg
         self.audio = audio_io
@@ -87,6 +91,10 @@ class RealtimeSession:
         self.wire_rate = wire_rate(cfg)
         self._on_event = on_event
         self.preroll = preroll
+        # Optional warm-connection hooks: acquire() returns a ready connection (or
+        # None to fall back to an inline connect); release() recycles it after.
+        self._acquire = acquire
+        self._release = release
         self._stop = asyncio.Event()
         # Closed during the warm-up handshake: the send loop holds mic streaming
         # until begin_listening() opens it (after the acknowledge earcon), so the
@@ -108,6 +116,20 @@ class RealtimeSession:
 
     # ── public entry: open the openai connection and run ─────────
     async def run(self, *, duration_s: float | None = None) -> None:
+        # Warm-connection fast path: reuse a connection opened during idle, so this
+        # turn skips the connect latency. release() recycles it afterwards. A None
+        # result (nothing warm yet) falls through to the inline connect below.
+        if self._acquire is not None:
+            conn = await self._acquire()
+            if conn is not None:
+                log.info("realtime_using_warm_connection", wire_rate=self.wire_rate)
+                try:
+                    await self.run_with_connection(conn, duration_s=duration_s)
+                finally:
+                    if self._release is not None:
+                        await self._release()
+                return
+
         try:
             from openai import AsyncOpenAI
         except ImportError as exc:  # pragma: no cover - exercised only on-device

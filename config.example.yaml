@@ -40,11 +40,16 @@ realtime:
   warmup_handshake: true     # send instructions + ack earcon BEFORE streaming the
                              # mic, so the wake word is never sent to the model
   follow_up_window_s: 8.0    # keep the session warm this long for follow-ups
-  turn_watchdog_s: 30.0      # abort a turn if the server sends no progress for this
+  turn_watchdog_s: 75.0      # abort a turn if the server sends no progress for this
                              # long (recover instead of hanging in 'thinking'); 0=off.
-                             # Must exceed the server's worst-case first-token latency.
+                             # Must exceed the whole silent gap: STT + the Hermes
+                             # agent's LLM/tool loop + TTS (tool-free turns already
+                             # run ~25-30s; tool calls add a round-trip).
   post_close_grace_s: 2.5    # after close, ignore wake this long while the mic flows
                              # so the XVF3800 AEC re-converges (avoids resume false-wake)
+  warm_connection: false     # keep one s2s connection warm during idle so a wake
+                             # skips the ~5s connect (recycled per wake = fresh chat;
+                             # falls back to inline connect). Single device only.
   connect_timeout_s: 10.0
   reconnect_initial_backoff_s: 0.5
   reconnect_max_backoff_s: 30.0

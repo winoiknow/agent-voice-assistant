@@ -41,7 +41,14 @@ class App:
         wake = create_wake_detector(self.settings.wakeword, self.settings.audio.capture_rate)
         led = LedController(create_xvf_host(self.settings.respeaker), self.settings.feedback.led)
         media = MediaController(self.settings, audio)
-        return Orchestrator(self.settings, audio, wake, led, media=media)
+        conn_manager = None
+        if self.settings.realtime.warm_connection:
+            from voiceagent.realtime.connection import WarmConnectionManager
+
+            conn_manager = WarmConnectionManager(self.settings.realtime)
+            log.info("warm_connection_enabled")
+        return Orchestrator(self.settings, audio, wake, led, media=media,
+                            conn_manager=conn_manager)
 
     async def run(self) -> None:
         """Build subsystems and run the orchestrator until shutdown."""

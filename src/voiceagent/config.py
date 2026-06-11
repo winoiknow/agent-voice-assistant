@@ -88,9 +88,13 @@ class RealtimeConfig(_StrictModel):
     follow_up_window_s: float = 8.0
     # Abort a turn if the s2s server sends no progress (audio/transcript/response)
     # for this long while we await it, instead of hanging in THINKING forever —
-    # recovers to a fail-safe earcon + IDLE. Must exceed the worst-case first-token
-    # latency (~14 s server-side). 0 disables the watchdog.
-    turn_watchdog_s: float = 30.0
+    # recovers to a fail-safe earcon + IDLE. This must exceed the *whole* silent
+    # gap between the user finishing and the first audio: STT + the Hermes agent's
+    # LLM/tool loop (tools run in the agent, invisible to us) + TTS. Observed
+    # tool-free turns already take ~25-30 s, and tool calls add a round-trip, so
+    # the default is generous. 0 disables the watchdog. (A server-side progress/
+    # heartbeat event during the gap is the proper fix — see README.)
+    turn_watchdog_s: float = 75.0
     # After a conversation closes, ignore wake detection for this long while the
     # mic keeps flowing — lets the XVF3800 AEC re-converge after music resumes so
     # the resume transient doesn't false-trigger the wake word.
@@ -108,6 +112,21 @@ class RealtimeConfig(_StrictModel):
             "stop listening",
         ]
     )
+
+    # Keep one s2s connection open and ready during IDLE so a wake skips the
+    # connect latency (~5 s cold). The connection is recycled on close and
+    # re-opened in the background, so each wake-session still gets a fresh
+    # conversation. Falls back to an inline connect when no warm connection is
+    # ready. Single-device only — the s2s server allows one concurrent session.
+    warm_connection: bool = False
+    # Recycle an idle warm connection older than this so it's replaced before the
+    # server/proxy drops a long-idle socket (which would burn the next wake's turn).
+    # Keep it under the upstream idle timeout (commonly 60-120 s).
+    warm_refresh_s: float = 45.0
+    # Wait this long after a conversation closes before re-warming, so we don't
+    # reconnect 1-2 s after disconnect — the rapid session churn the single-session
+    # s2s server stalls on. Still well under a typical gap between wakes.
+    warm_rewarm_delay_s: float = 3.0
 
     # Resilience.
     connect_timeout_s: float = 10.0
