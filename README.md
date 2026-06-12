@@ -40,6 +40,31 @@ voiceagent init --force          # re-run the wizard
 > CH0 is the hardware-AEC'd/beamformed channel; capturing the raw stereo downmix
 > reintroduces speaker echo (false wakes, barge-ins, STT hallucinations).
 
+## Updating & uninstalling
+
+**Update** — just re-run the installer; it's idempotent. It stops the service,
+fast-forwards the repo, reinstalls deps, regenerates the unit, and **restarts** (so
+the new code actually takes effect), printing the new revision:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/winoiknow/agent-voice-assistant/main/install.sh | bash
+```
+
+Your `config.yaml` is kept (the wizard is skipped when one exists). New options ship
+with safe defaults, so an old config keeps validating — run `voiceagent check-config`
+after updating to confirm and print the resolved values. Config is strict (an unknown
+key is an error), so if a future release ever *renames* a key, `check-config` points
+right at it.
+
+**Uninstall** — removes the systemd service, the PulseAudio pin, and the udev rule,
+then deletes the install dir. Your config/secrets and state are kept unless you add
+`--purge`; system packages (git, chrony, …) are left alone:
+
+```bash
+bash ~/agent-voice-assistant/uninstall.sh            # keep config + state
+bash ~/agent-voice-assistant/uninstall.sh --purge    # remove config, secrets, state too
+```
+
 ## Develop without hardware
 
 The audio and reSpeaker subsystems have dependency-free mock backends, so the

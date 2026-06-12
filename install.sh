@@ -24,15 +24,27 @@ sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
   git python3-venv python3-pip libportaudio2 alsa-utils curl chrony
 
-# 2. Clone or update the repo.
+# 2. Clone or update the repo. When updating, stop a running service first so we
+#    don't swap the venv / code (and the sendspin child) out from under it.
+SERVICE_UNIT="voiceagent.service"
 if [ -d "$INSTALL_DIR/.git" ]; then
-  say "Updating $INSTALL_DIR"
-  git -C "$INSTALL_DIR" pull --ff-only --quiet
+  if systemctl --user is-active --quiet "$SERVICE_UNIT" 2>/dev/null; then
+    say "Stopping the running service for the update"
+    systemctl --user stop "$SERVICE_UNIT" || true
+  fi
+  OLD_REV="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || echo none)"
+  say "Updating $INSTALL_DIR (at $OLD_REV)"
+  git -C "$INSTALL_DIR" pull --ff-only --quiet || {
+    warn "git pull --ff-only failed (local changes or diverged history)."
+    warn "Resolve it in $INSTALL_DIR, or remove that dir and re-run for a fresh clone."
+    exit 1
+  }
 else
   say "Cloning into $INSTALL_DIR"
   git clone --quiet --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 cd "$INSTALL_DIR"
+NEW_REV="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 # 3. venv + package (+ on-device extras). openWakeWord is --no-deps because it
 #    hard-requires tflite-runtime on Linux (no aarch64/py3.12 wheel); we use ONNX.
@@ -146,14 +158,18 @@ TimeoutStopSec=15
 WantedBy=default.target
 EOF
 systemctl --user daemon-reload
-systemctl --user enable --now voiceagent.service || true
+systemctl --user enable "$SERVICE_UNIT" >/dev/null 2>&1 || true
+# restart (not enable --now) so an update actually replaces a running process.
+systemctl --user restart "$SERVICE_UNIT" || true
 
 cat <<EOF
 
-$(say "Installed.")
-  Service : systemctl --user status voiceagent
-  Logs    : journalctl --user -u voiceagent -f
-  Config  : $CONFIG_DIR/config.yaml   (re-run: voiceagent init --force)
+$(say "Installed — agent-voice-assistant @ $NEW_REV")
+  Service   : systemctl --user status voiceagent
+  Logs      : journalctl --user -u voiceagent -f
+  Config    : $CONFIG_DIR/config.yaml   (re-run: voiceagent init --force)
+  Update    : re-run this installer (curl … | bash) — idempotent, restarts the service
+  Uninstall : bash $INSTALL_DIR/uninstall.sh   (add --purge to also remove config/state)
 
 Note: the service runs in your graphical login session (for PulseAudio access).
 For unattended boot, enable desktop auto-login, or 'loginctl enable-linger $USER'
