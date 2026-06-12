@@ -230,6 +230,64 @@ journalctl --user -u voiceagent | grep heartbeat
 cat ~/.local/state/voiceagent/metrics.json
 ```
 
+### Reading the structured log
+
+With `logging.file` set, every log line is written as **one JSON object per line**
+(`logging.file_format: json`, the default — set `console` for the human-readable
+format instead). The file **rotates** at `logging.file_max_bytes` (default 5 MB,
+`0` disables) keeping `logging.file_backups` old files (default 3, e.g.
+`voiceagent.log.1`). Secrets are **redacted** before writing: any field whose key
+contains `token`/`api_key`/`secret`/`password`, and token-like string values, are
+masked as `***redacted***`.
+
+Every object has `timestamp` (UTC ISO-8601), `level`, and `event` (the message
+name); the rest of the keys are event-specific context. Parse it with `jq`:
+
+```bash
+LOG=~/.local/state/voiceagent/voiceagent.log
+
+tail -n 50 "$LOG" | jq .                          # pretty-print recent lines
+jq 'select(.level=="warning" or .level=="error")' "$LOG"   # only problems
+
+# follow a turn live: just the state transitions
+tail -f "$LOG" | jq -r 'select(.event=="state") | "\(.timestamp)  \(.value)"'
+
+# everything for one event, e.g. ducking decisions
+jq -c 'select(.event|startswith("music_"))' "$LOG"
+
+# latest heartbeat snapshot (counters + latencies)
+jq 'select(.event=="heartbeat")' "$LOG" | tail -1
+```
+
+Events worth grepping when something looks wrong:
+
+| `event`                     | Means                                                              |
+| --------------------------- | ----------------------------------------------------------------- |
+| `state` (`value=…`)         | Turn state machine: `engaging→listening→thinking→speaking→idle`.  |
+| `turn_watchdog_fired`       | A turn got no response within `realtime.turn_watchdog_s`; aborted. |
+| `realtime_error`            | The s2s server returned an error frame (`type`, `message`).        |
+| `closer_detected`           | A closer phrase ended the turn.                                    |
+| `music_ducked` / `music_unducked` | Player attenuated at engage / restored at close (`to=`, `agent_requested=`, `agent_changed=`). |
+| `volume_request_noted`      | Captured an agent "set volume" tool call to re-apply at turn end (`level`, `ha`). |
+| `tool_call` (`name=…`)      | An agent tool call s2s forwarded (most run invisibly in the agent). |
+| `warm_connection_ready` / `realtime_using_warm_connection` | Warm s2s connection armed / reused for a wake. |
+| `heartbeat`                 | Periodic metrics snapshot (mirrors `metrics.json`).               |
+
+A quick sanity sweep after a session:
+
+```bash
+jq -r 'select(.event|IN("turn_watchdog_fired","realtime_error","music_restore_failed"))
+       | "\(.timestamp) \(.event) \(.message // .error // "")"' "$LOG"
+```
+
+> **"Set the volume" gets confirmed but doesn't change.** The agent sets volume via
+> a Music Assistant tool mid-turn, but MA can drop that command while the player is
+> busy during TTS. The client works around it: it captures the requested level
+> (`volume_request_noted`) and re-applies it via Home Assistant at turn end
+> (`music_unducked … agent_requested=true`). If the new volume doesn't stick, check
+> the log for those two lines — `volume_request_noted` missing means the tool call /
+> its arguments never reached the client.
+
 ## Multi-device wake arbitration
 
 When several units are within earshot, you don't want them all answering one wake
