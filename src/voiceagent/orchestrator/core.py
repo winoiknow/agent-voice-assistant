@@ -258,6 +258,11 @@ class Orchestrator:
         elif kind == "audio":
             if self._state is not LedState.SPEAKING:
                 await self._set_state(LedState.SPEAKING)
+                if self.media is not None:
+                    # Catch music the agent started mid-turn (MA tools) so it
+                    # ducks under the reply, not just music playing at wake time.
+                    with contextlib.suppress(Exception):
+                        await self.media.on_speaking()
         elif kind == "response_done":
             await self._set_state(LedState.LISTENING)
             return loop.time() + self.settings.realtime.follow_up_window_s
@@ -265,6 +270,13 @@ class Orchestrator:
             # Visible only if s2s forwards it; tools that run inside the Hermes
             # agent stay invisible (their latency is part of the THINKING gap).
             log.info("tool_call", name=event.get("name"))
+            # MA drops the agent's volume command while the player is busy mid-turn,
+            # so capture the requested level here and re-apply it at turn end.
+            if self.media is not None:
+                with contextlib.suppress(Exception):
+                    self.media.note_volume_request(
+                        event.get("name", ""), event.get("arguments", "")
+                    )
         elif kind == "user_transcript" and event.get("final"):
             if is_closer(event.get("text", ""), self.settings.realtime.closer_phrases):
                 log.info("closer_detected", text=event.get("text", ""))

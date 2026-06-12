@@ -9,7 +9,9 @@ parallel when a ``music_target`` is configured.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -45,6 +47,7 @@ class MediaController:
         self._paused = False
         self._ducked = False
         self._saved_volume: float | None = None
+        self._requested_volume: float | None = None
 
     @staticmethod
     def _default_ha(cfg: HomeAssistantConfig) -> HomeAssistantClient:
@@ -79,16 +82,30 @@ class MediaController:
         if self.settings.audio.music_target:  # optional instant local PipeWire duck
             with contextlib.suppress(Exception):
                 await self.audio.set_music_gain(self.settings.audio.duck_level)
-        if self._ha is None or not self._entity:
+        await self._attenuate()
+
+    async def on_speaking(self) -> None:
+        """Re-assert the duck when the agent starts speaking. The agent can start
+        music itself mid-turn (Music Assistant tools), so it may not have been
+        playing at on_turn_start — this catches that and ducks under the reply."""
+        await self._attenuate()
+
+    async def _attenuate(self) -> None:
+        """Duck/pause the player for the turn (once). In duck mode we lower the
+        volume even when nothing is playing yet, so music the agent starts later in
+        the turn (Music Assistant tools) comes in already ducked instead of blasting
+        over the reply — which otherwise drowns out the user's next command."""
+        if self._ha is None or not self._entity or self._paused or self._ducked:
             return
         try:
-            if not await self._ha.is_playing(self._entity):
-                return
             if self._media.on_turn == "pause":
+                # Pause only makes sense for a stream that's actually playing.
+                if not await self._ha.is_playing(self._entity):
+                    return
                 await self._ha.media_pause(self._entity)
                 self._paused = True
                 log.info("music_paused", entity=self._entity)
-            else:  # duck: lower the volume but keep the stream flowing
+            else:  # duck: lower the player volume up front; restore it on close.
                 self._saved_volume = await self._ha.get_volume(self._entity)
                 await self._ha.set_volume(self._entity, self._media.duck_level)
                 self._ducked = True
@@ -96,6 +113,48 @@ class MediaController:
                          to=self._media.duck_level, was=self._saved_volume)
         except Exception as exc:
             log.warning("music_duck_pause_failed", error=str(exc))
+
+    def note_volume_request(self, name: str, arguments: str) -> None:
+        """Capture an agent volume change from its tool-call args, to apply at close.
+
+        The agent sets volume via a Music Assistant MCP tool mid-turn, but MA drops
+        those commands while the player is busy during the turn ("Ignoring command
+        cmd_volume_set for unavailable player"). So we read the requested level from
+        the tool arguments and replay it ourselves at turn end via Home Assistant,
+        when the player accepts it again. Levels are 0-100 (the MA tool's scale); a
+        stray 0-1 fraction is taken as-is.
+        """
+        if not name.endswith("volume_set"):
+            return
+        try:
+            data = json.loads(arguments) if arguments else {}
+            level = float(data["level"])
+        except (ValueError, KeyError, TypeError):
+            return
+        ha = level / 100.0 if level > 1.0 else level
+        self._requested_volume = max(0.0, min(1.0, ha))
+        log.info("volume_request_noted", name=name, level=level, ha=self._requested_volume)
+
+    async def _settled_volume(self) -> float | None:
+        """Read the player volume, polling briefly until two consecutive reads agree.
+
+        HA's reported ``volume_level`` trails Music Assistant by up to ~1 s, so a read
+        taken immediately at turn end can still show our ducked value even when the
+        agent set a new volume mid-turn. Polling to a stable reading lets us tell the
+        two apart.
+        """
+        prev: float | None = None
+        last: float | None = None
+        for _ in range(6):  # ~1.2 s worst case
+            try:
+                last = await self._ha.get_volume(self._entity)
+            except Exception:
+                return prev
+            if prev is not None and abs(last - prev) <= 0.01:
+                return last
+            prev = last
+            await asyncio.sleep(0.2)
+        return last
 
     async def on_turn_end(self) -> None:
         """Restore the player (resume or un-duck) when the conversation closes."""
@@ -105,14 +164,35 @@ class MediaController:
                     await self._ha.media_play(self._entity)
                     log.info("music_resumed", entity=self._entity)
                 elif self._ducked:
-                    if self._saved_volume is not None:
-                        await self._ha.set_volume(self._entity, self._saved_volume)
-                    log.info("music_unducked", entity=self._entity, to=self._saved_volume)
+                    if self._requested_volume is not None:
+                        # The user asked the agent to change the volume this turn.
+                        # MA dropped the agent's mid-turn command (player busy), so
+                        # apply the requested level here — at close, the player takes
+                        # it — instead of restoring the pre-turn volume.
+                        target = self._requested_volume
+                        await self._ha.set_volume(self._entity, target)
+                        log.info("music_unducked", entity=self._entity, to=target,
+                                 agent_requested=True)
+                    else:
+                        # No explicit request: restore the pre-turn volume, unless the
+                        # agent moved it by some path we did see. HA's volume state lags
+                        # Music Assistant, so read until it settles before deciding — a
+                        # single read can still show the ducked value.
+                        cur = await self._settled_volume()
+                        changed = cur is not None and abs(cur - self._media.duck_level) > 0.02
+                        restore = cur if changed else self._saved_volume
+                        if restore is not None and restore != cur:
+                            await self._ha.set_volume(self._entity, restore)
+                        log.info(
+                            "music_unducked", entity=self._entity, to=restore,
+                            settled=cur, agent_changed=changed,
+                        )
             except Exception as exc:
                 log.warning("music_restore_failed", error=str(exc))
         self._paused = False
         self._ducked = False
         self._saved_volume = None
+        self._requested_volume = None
         if self.settings.audio.music_target:
             with contextlib.suppress(Exception):
                 await self.audio.set_music_gain(1.0)

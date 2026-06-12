@@ -68,6 +68,89 @@ async def test_duck_on_turn_start_restore_on_end() -> None:
     await mc.stop()
 
 
+async def test_duck_preducks_when_idle_so_mid_turn_music_is_ducked() -> None:
+    # Agent is a DJ: nothing playing at engage. Duck mode pre-ducks anyway, so when
+    # the agent starts music mid-reply it comes in already ducked (not full blast,
+    # which would drown out the user's next command).
+    ha = FakeHA(playing=False, volume=0.9)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    assert ha.calls[-1] == ("volume", 0.25)  # pre-ducked even though idle
+    ha.playing = True  # the agent's play_media tool starts music -> at 0.25
+    await mc.on_speaking()  # idempotent: already ducked this turn
+    assert ha.calls.count(("volume", 0.25)) == 1
+    await mc.on_turn_end()
+    assert ha.calls[-1] == ("volume", 0.9)  # restored on close
+    await mc.stop()
+
+
+async def test_unduck_honors_agent_volume_change_mid_turn() -> None:
+    # User asks the agent to change the volume during the turn. The agent sets it via
+    # Music Assistant while we're ducked. On close we must NOT stomp it back to the
+    # pre-turn level — we honor the user's requested volume.
+    ha = FakeHA(playing=True, volume=0.8)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    assert ha.volume == 0.25  # ducked, saved=0.8
+    await ha.set_volume("e", 0.5)  # agent changes volume mid-turn
+    await mc.on_turn_end()
+    assert ha.volume == 0.5  # honored, not restored to 0.8
+    await mc.stop()
+
+
+async def test_unduck_restores_when_agent_left_volume_alone() -> None:
+    ha = FakeHA(playing=True, volume=0.8)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    assert ha.volume == 0.25
+    await mc.on_turn_end()
+    assert ha.volume == 0.8  # untouched by agent -> restore pre-turn level
+    await mc.stop()
+
+
+async def test_agent_volume_request_applied_at_turn_end() -> None:
+    # The agent asked to set volume to 70 (MA scale 0-100). MA drops it mid-turn, so
+    # we capture it from the tool args and apply 0.70 via HA at close.
+    ha = FakeHA(playing=True, volume=0.4)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    assert ha.volume == 0.25  # ducked
+    mc.note_volume_request(
+        "mcp_mcpjungle_Music_Assistant__volume_volume_set",
+        '{"player_id": "p", "level": 70}',
+    )
+    await mc.on_turn_end()
+    assert ha.volume == 0.7  # requested level applied, not the pre-turn 0.4
+    await mc.stop()
+
+
+async def test_agent_volume_request_accepts_fraction() -> None:
+    ha = FakeHA(playing=True, volume=0.4)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    mc.note_volume_request("x__volume_group_volume_set", '{"level": 0.3}')
+    await mc.on_turn_end()
+    assert ha.volume == 0.3
+    await mc.stop()
+
+
+async def test_non_volume_tool_call_is_ignored() -> None:
+    ha = FakeHA(playing=True, volume=0.4)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    mc.note_volume_request("x__playback_play_media", '{"uri": "spotify:foo"}')
+    mc.note_volume_request("x__volume_volume_set", "not json")
+    await mc.on_turn_end()
+    assert ha.volume == 0.4  # no request captured -> restore pre-turn volume
+    await mc.stop()
+
+
 async def test_pause_mode_on_turn_start_resume_on_end() -> None:
     ha = FakeHA(playing=True)
     mc = _controller(_settings(media_over={"on_turn": "pause"}), ha)
@@ -79,12 +162,12 @@ async def test_pause_mode_on_turn_start_resume_on_end() -> None:
     await mc.stop()
 
 
-async def test_no_action_when_not_playing() -> None:
+async def test_pause_mode_no_action_when_not_playing() -> None:
     ha = FakeHA(playing=False)
-    mc = _controller(_settings(), ha)  # duck mode
+    mc = _controller(_settings(media_over={"on_turn": "pause"}), ha)
     await mc.start()
     await mc.on_turn_start()
-    assert ha.calls == []  # nothing playing -> don't touch it
+    assert ha.calls == []  # pause only acts on a stream that's actually playing
     await mc.on_turn_end()
     assert ha.calls == []
     await mc.stop()
