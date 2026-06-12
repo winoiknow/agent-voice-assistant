@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import cast
 
 import structlog
@@ -30,13 +32,34 @@ def _redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict)
     return event_dict
 
 
+def _renderer(fmt: str, *, colors: bool) -> Processor:
+    if fmt == "json":
+        return structlog.processors.JSONRenderer()
+    return structlog.dev.ConsoleRenderer(colors=colors)
+
+
+def _formatter(fmt: str, shared: list[Processor], *, colors: bool) -> logging.Formatter:
+    """A stdlib formatter that renders structlog records (and stdlib ones, via the
+    foreign pre-chain) so multiple handlers can each use their own format."""
+    return structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            _renderer(fmt, colors=colors),
+        ],
+    )
+
+
 def configure_logging(cfg: LoggingConfig) -> None:
-    """Configure structlog + stdlib logging from the resolved config."""
+    """Configure structlog + stdlib logging from the resolved config.
+
+    Routes structlog through stdlib logging so output can fan out to multiple
+    handlers — stdout (journald) plus an optional rotating structured log file,
+    each with its own format.
+    """
     level = logging.getLevelName(cfg.level)
     if not isinstance(level, int):  # getLevelName returns a str for unknown names
         level = logging.INFO
-
-    logging.basicConfig(format="%(message)s", stream=sys.stdout, level=level)
 
     shared: list[Processor] = [
         structlog.contextvars.merge_contextvars,
@@ -45,18 +68,34 @@ def configure_logging(cfg: LoggingConfig) -> None:
         _redact_secrets,
     ]
 
-    renderer: Processor
-    if cfg.format == "json":
-        renderer = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer(colors=sys.stdout.isatty())
-
     structlog.configure(
-        processors=[*shared, renderer],
+        processors=[
+            *shared,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
         wrapper_class=structlog.make_filtering_bound_logger(level),
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
+
+    root = logging.getLogger()
+    root.setLevel(level)
+    for handler in list(root.handlers):  # idempotent: clear prior config
+        root.removeHandler(handler)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(_formatter(cfg.format, shared, colors=sys.stdout.isatty()))
+    root.addHandler(console)
+
+    if cfg.file:
+        Path(cfg.file).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            str(Path(cfg.file).expanduser()),
+            maxBytes=cfg.file_max_bytes,
+            backupCount=cfg.file_backups,
+        )
+        file_handler.setFormatter(_formatter(cfg.file_format, shared, colors=False))
+        root.addHandler(file_handler)
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:

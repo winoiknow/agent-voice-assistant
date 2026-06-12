@@ -128,6 +128,26 @@ async def test_full_cycle_drives_led_states() -> None:
     assert led.states[-1] is LedState.IDLE
 
 
+async def test_metrics_recorded_over_a_full_cycle() -> None:
+    events = [
+        {"kind": "speech_started"},
+        {"kind": "speech_stopped"},
+        {"kind": "response_started"},
+        {"kind": "audio", "bytes": 100},
+        {"kind": "response_done", "status": "completed"},
+        {"kind": "user_transcript", "text": "goodbye", "final": True},
+    ]
+    orch, _led = _orch(_settings(), events)
+    await asyncio.wait_for(orch.run(), timeout=3.0)
+    snap = orch.metrics.snapshot()
+    assert snap["counters"]["wakes_detected"] == 1
+    assert snap["counters"]["conversations_started"] == 1
+    assert snap["counters"]["conversations_closed"] == 1
+    # ENGAGING→LISTENING and THINKING→SPEAKING latencies were captured.
+    assert snap["latency"]["wake_to_listen_s"]["count"] == 1
+    assert snap["latency"]["think_to_speak_s"]["count"] == 1
+
+
 async def test_followup_timeout_closes() -> None:
     events = [{"kind": "response_done", "status": "completed"}]
     orch, led = _orch(_settings(), events, hold=True)

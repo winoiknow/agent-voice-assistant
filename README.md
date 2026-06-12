@@ -182,6 +182,29 @@ falls back to an inline connect, so it never regresses. Logs `warm_connection_re
 / `realtime_using_warm_connection`. **Single device only** — the s2s server allows
 one concurrent session.
 
+## Observability
+
+For a soak run or just to keep an eye on a unit, turn on the heartbeat and a log
+file. The orchestrator tracks counters (`wakes_detected`, `wakes_suppressed`,
+`conversations_started/closed/failed`, `turn_watchdog_fired`, `barge_ins`,
+`realtime_errors`) and latencies (`wake_to_listen_s`, `think_to_speak_s`):
+
+```yaml
+logging:
+  file: ~/.local/state/voiceagent/voiceagent.log   # rotating structured JSON
+observability:
+  heartbeat_interval_s: 60        # a 'heartbeat' log line every minute
+  metrics_file: ~/.local/state/voiceagent/metrics.json
+```
+
+The heartbeat lands in journald and the log file; `metrics.json` holds the latest
+snapshot (atomically rewritten, safe to `cat`/scrape) — no open port:
+
+```bash
+journalctl --user -u voiceagent | grep heartbeat
+cat ~/.local/state/voiceagent/metrics.json
+```
+
 ## Multi-device wake arbitration
 
 When several units are within earshot, you don't want them all answering one wake
@@ -203,6 +226,40 @@ Verify two units see each other on the LAN before relying on it:
 voiceagent arbitration-test -s 30      # run on each unit; they should list each
                                        # other as peers and trade synthetic wakes
 ```
+
+## Commands
+
+All take `--config PATH` (else `VA_CONFIG`, else the standard locations). The
+hardware test commands run against the mock backends when `audio.backend: mock`
+and `respeaker.simulate: true`, so they work on a laptop too.
+
+| Command | What it does |
+| --- | --- |
+| `voiceagent run` | Start the assistant (the systemd service runs this). |
+| `voiceagent check-config` | Validate config and print the resolved values (secrets redacted). |
+| `voiceagent init [--force]` | Interactive setup wizard → `config.yaml` + `secrets.env`. |
+| `voiceagent audio-test` | Capture → playback → wake cue → duck demo. |
+| `voiceagent led-test [state]` | Drive the LED ring (a state, or cycle all). |
+| `voiceagent respeaker-tune` | Apply the configured XVF3800 DSP tuning and read it back. |
+| `voiceagent wake-test [-s N]` | Listen for the wake word and print detections + latency. |
+| `voiceagent realtime-test [-s N]` | One full conversation against the s2s server. |
+| `voiceagent media-test [-s N]` | Run the sendspin daemon for Music Assistant discovery. |
+| `voiceagent arbitration-test [-s N]` | Multi-device wake arbitration over UDP (run on each unit). |
+
+## Feature knobs at a glance
+
+Everything below is in `config.yaml` (see `config.example.yaml` for the full set);
+each links to the section above:
+
+| Feature | Enable / tune | Default |
+| --- | --- | --- |
+| Warm-up handshake (wake word never sent) | `realtime.warmup_handshake` | on |
+| Turn-stall watchdog | `realtime.turn_watchdog_s` | 75 s |
+| Warm s2s connection (kills cold-connect latency) | `realtime.warm_connection` | off |
+| Music duck vs. pause on a turn | `media.on_turn` | duck |
+| Multi-device wake arbitration | `arbitration.enabled` + `community` | off |
+| Heartbeat metrics + `metrics.json` | `observability.heartbeat_interval_s` / `metrics_file` | 60 s / off |
+| Structured log file | `logging.file` | off |
 
 ## Development
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -20,6 +21,7 @@ from typing import Any, Protocol
 from voiceagent.audio.base import AudioIO
 from voiceagent.config import Settings
 from voiceagent.logging_setup import get_logger
+from voiceagent.metrics import Metrics, MetricsReporter
 from voiceagent.orchestrator.closer import is_closer
 from voiceagent.realtime.session import EventCallback, RealtimeSession
 from voiceagent.respeaker.led import LedController, LedState
@@ -65,6 +67,7 @@ class Orchestrator:
         conversation_factory: ConversationFactory | None = None,
         conn_manager: Any = None,
         arbitrator: Any = None,
+        metrics: Metrics | None = None,
     ) -> None:
         self.settings = settings
         self.audio = audio_io
@@ -73,6 +76,9 @@ class Orchestrator:
         self.media = media
         self._conn_manager = conn_manager
         self._arbitrator = arbitrator
+        self.metrics = metrics or Metrics()
+        self._reporter = MetricsReporter(self.metrics, settings.observability)
+        self._state_since: dict[LedState, float] = {}
         self._factory = conversation_factory or self._default_factory
         self._shutdown = asyncio.Event()
         # None (not IDLE) so the first _set_state(IDLE) actually fires and forces
@@ -99,6 +105,7 @@ class Orchestrator:
         if self._arbitrator is not None:
             with contextlib.suppress(Exception):
                 await self._arbitrator.start()
+        await self._reporter.start()
         try:
             async with self.audio:
                 await self._set_state(LedState.IDLE)
@@ -113,11 +120,14 @@ class Orchestrator:
                         await self._converse(wake)
                     except Exception as exc:
                         log.error("conversation_failed", error=str(exc))
+                        self.metrics.incr("conversations_failed")
                         await self._fail_safe()
                     await self._post_close_settle()
                 await self._set_state(LedState.IDLE)
                 log.info("orchestrator_stopped")
         finally:
+            with contextlib.suppress(Exception):
+                await self._reporter.stop()
             if self._arbitrator is not None:
                 with contextlib.suppress(Exception):
                     await self._arbitrator.stop()
@@ -156,6 +166,7 @@ class Orchestrator:
             log.warning("arbitration_error_handling_anyway", error=str(exc))
             return True
         log.info("wake_suppressed_by_peer", model=wake.model)
+        self.metrics.incr("wakes_suppressed")
         self.wake.reset()
         return False
 
@@ -167,6 +178,7 @@ class Orchestrator:
             event = self.wake.process(frame)
             if event is not None:
                 log.info("wake_detected", model=event.model, score=round(event.score, 3))
+                self.metrics.incr("wakes_detected")
                 return event
         return None
 
@@ -177,6 +189,7 @@ class Orchestrator:
         # handshake the user speaks fresh after the acknowledge earcon.
         conv = self._factory(events.put_nowait, b"")
         self._active_conv = conv
+        self.metrics.incr("conversations_started")
 
         await self._engage()
         run_task = asyncio.create_task(conv.run())
@@ -202,6 +215,7 @@ class Orchestrator:
                         followup_deadline = None
                         continue
                     log.warning("turn_watchdog_fired", waited_s=watchdog_s)
+                    self.metrics.incr("turn_watchdog_fired")
                     stalled = True
                     conv.stop()
                     break
@@ -235,6 +249,8 @@ class Orchestrator:
         loop = asyncio.get_running_loop()
         kind = event["kind"]
         if kind in ("barge_in", "speech_started"):
+            if kind == "barge_in":
+                self.metrics.incr("barge_ins")
             await self._set_state(LedState.LISTENING)
             return None  # user is talking again; cancel the follow-up timer
         if kind in ("speech_stopped", "response_started"):
@@ -256,6 +272,7 @@ class Orchestrator:
                 return None
         elif kind == "error":
             log.warning("realtime_error", **{k: event.get(k) for k in ("type", "message")})
+            self.metrics.incr("realtime_errors")
             conv.stop()
             return None
         return deadline
@@ -286,6 +303,7 @@ class Orchestrator:
             with contextlib.suppress(Exception):
                 await self.media.on_turn_end()
         await self._set_state(LedState.IDLE)
+        self.metrics.incr("conversations_closed")
         log.info("conversation_closed")
 
     async def _fail_safe(self) -> None:
@@ -301,7 +319,16 @@ class Orchestrator:
     async def _set_state(self, state: LedState) -> None:
         if state is self._state:
             return
+        prev = self._state
+        now = time.monotonic()
+        # wake→listening (warm-up/connect cost) and think→speak (server response cost).
+        if state is LedState.LISTENING and prev is LedState.ENGAGING:
+            self.metrics.observe("wake_to_listen_s", now - self._state_since.get(prev, now))
+        elif state is LedState.SPEAKING and prev is LedState.THINKING:
+            self.metrics.observe("think_to_speak_s", now - self._state_since.get(prev, now))
         self._state = state
+        self._state_since[state] = now
+        self.metrics.gauge("state", state.value)
         log.info("state", value=state.value)
         with contextlib.suppress(Exception):
             await self.led.show(state)

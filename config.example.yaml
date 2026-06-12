@@ -148,4 +148,17 @@ arbitration:
 # ── logging ─────────────────────────────────────────────────────────────────
 logging:
   level: INFO                # CRITICAL | ERROR | WARNING | INFO | DEBUG
-  format: console            # console | json
+  format: console            # console | json (stdout/journald)
+  file: null                 # also write a structured log file, e.g.
+                             #   ~/.local/state/voiceagent/voiceagent.log
+  file_format: json          # console | json (json recommended for files)
+  file_max_bytes: 5000000    # rotate at this size (0 = no rotation)
+  file_backups: 3            # keep this many rotated files
+
+# ── observability (runtime metrics) ─────────────────────────────────────────
+# A periodic 'heartbeat' log line reports counters (wakes, turns, failures,
+# watchdog fires) and latencies (wake→listening, think→speak). metrics_file also
+# writes the current snapshot as JSON for scraping without an open port.
+observability:
+  heartbeat_interval_s: 60.0 # 0 disables the heartbeat log
+  metrics_file: null         # e.g. ~/.local/state/voiceagent/metrics.json

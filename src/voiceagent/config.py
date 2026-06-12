@@ -291,6 +291,12 @@ class FeedbackConfig(_StrictModel):
 class LoggingConfig(_StrictModel):
     level: str = "INFO"
     format: Literal["console", "json"] = "console"
+    # Optional structured log file (in addition to stdout/journald). JSON is the
+    # most useful for a file (parseable); it rotates by size.
+    file: str | None = None
+    file_format: Literal["console", "json"] = "json"
+    file_max_bytes: int = Field(default=5_000_000, ge=0)  # 0 = no rotation
+    file_backups: int = Field(default=3, ge=0)
 
     @field_validator("level")
     @classmethod
@@ -300,6 +306,19 @@ class LoggingConfig(_StrictModel):
         if up not in valid:
             raise ValueError(f"invalid log level {v!r}; choose one of {sorted(valid)}")
         return up
+
+
+class ObservabilityConfig(_StrictModel):
+    """Runtime metrics: a periodic heartbeat log line and an optional snapshot file.
+
+    The heartbeat emits counters (wakes, turns, failures, watchdog fires…) and the
+    latest latencies (wake→listening, think→speak) as a structured log event, so a
+    soak run is measurable from the logs alone. ``metrics_file`` additionally writes
+    the current snapshot as JSON for scraping without an open port.
+    """
+
+    heartbeat_interval_s: float = Field(default=60.0, ge=0)  # 0 disables the heartbeat
+    metrics_file: str | None = None
 
 
 class Settings(BaseSettings):
@@ -321,6 +340,7 @@ class Settings(BaseSettings):
     feedback: FeedbackConfig = Field(default_factory=FeedbackConfig)
     arbitration: ArbitrationConfig = Field(default_factory=ArbitrationConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
 
     @classmethod
     def settings_customise_sources(
