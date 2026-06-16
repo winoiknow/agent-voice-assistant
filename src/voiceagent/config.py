@@ -120,9 +120,13 @@ class RealtimeConfig(_StrictModel):
     # ready. Single-device only — the s2s server allows one concurrent session.
     warm_connection: bool = False
     # Recycle an idle warm connection older than this so it's replaced before the
-    # server/proxy drops a long-idle socket (which would burn the next wake's turn).
-    # Keep it under the upstream idle timeout (commonly 60-120 s).
-    warm_refresh_s: float = 45.0
+    # server drops a long-idle socket (which would burn the next wake's turn). The
+    # binding constraint is uvicorn's WebSocket keepalive: it pings every 20 s and
+    # 1011-closes a socket whose ping goes unanswered for 20 s. Staying well inside
+    # one ping cycle means our recycle traffic keeps the socket provably alive every
+    # cycle (and defeats any NAT/conntrack idle drop), so keep this ~15 s, not tens
+    # of seconds.
+    warm_refresh_s: float = 15.0
     # Wait this long after a conversation closes before re-warming, so we don't
     # reconnect 1-2 s after disconnect — the rapid session churn the single-session
     # s2s server stalls on. Still well under a typical gap between wakes.
