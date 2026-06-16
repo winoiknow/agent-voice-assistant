@@ -33,6 +33,28 @@ class FakeConn:
         await asyncio.Event().wait()  # block; turns drive completion in these tests
 
 
+class FakePingWS:
+    """Stand-in for the underlying websockets ClientConnection (exposes ping())."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.pings = 0
+        self.fail = fail
+
+    async def ping(self) -> "asyncio.Future[bytes]":
+        self.pings += 1
+        if self.fail:
+            raise RuntimeError("connection closed")
+        fut: asyncio.Future[bytes] = asyncio.get_event_loop().create_future()
+        fut.set_result(b"pong")  # pong already received
+        return fut
+
+
+class FakePingConn(FakeConn):
+    def __init__(self, fail: bool = False) -> None:
+        super().__init__()
+        self._connection = FakePingWS(fail)
+
+
 def _cfg(**over: Any) -> RealtimeConfig:
     base: dict[str, Any] = {
         "reconnect_initial_backoff_s": 0.01,
@@ -86,6 +108,47 @@ async def test_warm_manager_refreshes_idle_connection() -> None:
     await asyncio.sleep(0.4)  # exceed warm_refresh_s -> supervisor recycles
     assert len(opened) >= 2
     assert opened[0].closed is True  # the aged connection was closed
+    await mgr.stop()
+
+
+async def test_warm_manager_keepalive_pings_idle_connection() -> None:
+    # With keepalive enabled and refresh off, one connection is held alive by
+    # repeated pings instead of being recycled.
+    conns: list[FakePingConn] = []
+
+    async def opener() -> tuple[FakeCM, FakePingConn]:
+        c = FakePingConn()
+        conns.append(c)
+        return FakeCM(), c
+
+    mgr = WarmConnectionManager(
+        _cfg(warm_refresh_s=0.0, warm_ping_interval_s=0.05, warm_ping_timeout_s=1.0),
+        opener=opener,
+    )
+    await mgr.start()
+    await asyncio.sleep(0.25)  # several ping intervals
+    assert len(conns) == 1  # never recycled
+    assert conns[0]._connection.pings >= 2  # kept alive by pings
+    await mgr.stop()
+
+
+async def test_warm_manager_reopens_on_failed_ping() -> None:
+    # A ping that fails means a dead socket: drop it and reopen.
+    conns: list[FakePingConn] = []
+
+    async def opener() -> tuple[FakeCM, FakePingConn]:
+        c = FakePingConn(fail=True)
+        conns.append(c)
+        return FakeCM(), c
+
+    mgr = WarmConnectionManager(
+        _cfg(warm_refresh_s=0.0, warm_ping_interval_s=0.05, warm_rewarm_delay_s=0.0),
+        opener=opener,
+    )
+    await mgr.start()
+    await asyncio.sleep(0.3)
+    assert len(conns) >= 2  # failed ping forced reopen(s)
+    assert conns[0].sent == [] and conns[0]._connection.pings >= 1
     await mgr.stop()
 
 

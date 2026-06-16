@@ -50,6 +50,14 @@ realtime:
   warm_connection: false     # keep one s2s connection warm during idle so a wake
                              # skips the ~5s connect (recycled per wake = fresh chat;
                              # falls back to inline connect). Single device only.
+  warm_ping_interval_s: 60   # ping the idle warm connection this often to keep it
+                             # alive between the server's keepalive pings (server
+                             # pings ~90s). 0 disables. One connection then lives for
+                             # hours with no idle rebuild churn.
+  warm_ping_timeout_s: 10.0  # wait this long for the pong before declaring the
+                             # connection dead and reopening it (client-side liveness).
+  warm_refresh_s: 0.0        # optional periodic recycle of the warm connection
+                             # (0 = off; the keepalive ping maintains liveness).
   connect_timeout_s: 10.0
   reconnect_initial_backoff_s: 0.5
   reconnect_max_backoff_s: 30.0

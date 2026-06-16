@@ -9,8 +9,11 @@ conversation, but the connect is paid off the wake's critical path.
 A single supervisor loop maintains the invariant "one fresh warm connection while
 idle":
 - it (re)establishes the connection with backoff;
-- it **refreshes** a connection that has been idle longer than ``warm_refresh_s``,
-  so an upstream idle timeout never hands us a dead socket;
+- it **keeps the connection alive** by sending a WebSocket ping every
+  ``warm_ping_interval_s`` and waiting for the pong (``warm_ping_timeout_s``); a
+  failed ping means a dead socket, so it drops and reopens. One connection then
+  lives for hours with no rebuild churn. (``warm_refresh_s`` can still force a
+  periodic recycle, but it is off by default.)
 - after a turn it waits ``warm_rewarm_delay_s`` before re-warming, so we don't
   reconnect 1-2 s after disconnect (rapid session churn the server stalls on).
 
@@ -47,6 +50,7 @@ class WarmConnectionManager:
         self._conn: RealtimeConnection | None = None
         self._ready = asyncio.Event()
         self._ready_at = 0.0  # monotonic time the current connection became ready
+        self._last_ping_at = 0.0  # monotonic time of the last keepalive ping
         self._rewarm_not_before = 0.0  # delay re-warm until this monotonic time
         self._in_use = False
         self._wake = asyncio.Event()  # poke the supervisor to re-evaluate promptly
@@ -118,18 +122,67 @@ class WarmConnectionManager:
                     backoff = min(backoff * 2, self.cfg.reconnect_max_backoff_s)
                     continue
                 backoff = self.cfg.reconnect_initial_backoff_s
-                self._ready_at = time.monotonic()
+                now = time.monotonic()
+                self._ready_at = now
+                self._last_ping_at = now
                 self._ready.set()
                 log.info("warm_connection_ready")
-            elif time.monotonic() - self._ready_at >= self.cfg.warm_refresh_s:
-                # Idle too long: replace it before an upstream idle timeout can.
+            elif self.cfg.warm_refresh_s > 0 and (
+                time.monotonic() - self._ready_at >= self.cfg.warm_refresh_s
+            ):
+                # Optional periodic recycle (off by default): replace the connection
+                # on a fixed age regardless of health.
                 log.info("warm_connection_refresh",
                          age_s=round(time.monotonic() - self._ready_at))
                 await self._close_cm()
+            elif self.cfg.warm_ping_interval_s > 0 and (
+                time.monotonic() - self._last_ping_at >= self.cfg.warm_ping_interval_s
+            ):
+                # Keepalive: ping the idle connection to keep it alive between the
+                # server's pings. A failed ping/pong means the socket is dead, so we
+                # drop it and reopen on the next loop.
+                if await self._keepalive_ping():
+                    self._last_ping_at = time.monotonic()
+                else:
+                    await self._close_cm()
             else:
-                # Sleep until the refresh is due (bounded), so refresh is prompt.
-                due = self._ready_at + self.cfg.warm_refresh_s - time.monotonic()
-                await self._idle_wait(min(1.0, max(0.05, due)))
+                # Sleep until the next ping (or refresh) is due, bounded so acquire/
+                # release stay responsive.
+                await self._idle_wait(min(1.0, max(0.05, self._next_due())))
+
+    def _next_due(self) -> float:
+        """Seconds until the next supervisor action (keepalive ping or recycle)."""
+        now = time.monotonic()
+        due = float("inf")
+        if self.cfg.warm_ping_interval_s > 0:
+            due = min(due, self._last_ping_at + self.cfg.warm_ping_interval_s - now)
+        if self.cfg.warm_refresh_s > 0:
+            due = min(due, self._ready_at + self.cfg.warm_refresh_s - now)
+        return due if due != float("inf") else 1.0
+
+    async def _keepalive_ping(self) -> bool:
+        """Send a WebSocket ping on the idle warm connection and wait for the pong.
+
+        Returns True if the connection answered (still alive), False if the ping
+        failed or the pong didn't arrive in ``warm_ping_timeout_s`` (dead socket —
+        the caller drops and reopens it). If the backend doesn't expose a ping we
+        keep the connection (nothing we can do), so this never causes a needless
+        recycle.
+        """
+        ws = getattr(self._conn, "_connection", None)
+        ping = getattr(ws, "ping", None)
+        if ping is None:
+            return True
+        try:
+            pong_waiter = await ping()
+            await asyncio.wait_for(pong_waiter, timeout=self.cfg.warm_ping_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("warm_ping_failed", error=str(exc))
+            return False
+        log.debug("warm_ping_ok")
+        return True
 
     async def _idle_wait(self, timeout: float) -> None:
         """Sleep up to ``timeout``, but wake early if poked (acquire/release)."""

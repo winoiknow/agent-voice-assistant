@@ -119,14 +119,21 @@ class RealtimeConfig(_StrictModel):
     # conversation. Falls back to an inline connect when no warm connection is
     # ready. Single-device only — the s2s server allows one concurrent session.
     warm_connection: bool = False
-    # Recycle an idle warm connection older than this so it's replaced before the
-    # server drops a long-idle socket (which would burn the next wake's turn). The
-    # binding constraint is uvicorn's WebSocket keepalive: it pings every 20 s and
-    # 1011-closes a socket whose ping goes unanswered for 20 s. Staying well inside
-    # one ping cycle means our recycle traffic keeps the socket provably alive every
-    # cycle (and defeats any NAT/conntrack idle drop), so keep this ~15 s, not tens
-    # of seconds.
-    warm_refresh_s: float = 15.0
+    # Keep the idle warm connection alive by sending a WebSocket ping every this
+    # many seconds (0 disables). The connection lives for hours instead of being
+    # recycled: the ping is outbound traffic that keeps the socket provably alive
+    # between the server's own keepalive pings (and defeats NAT/conntrack idle
+    # drop), so the next wake reuses one long-lived connection with no rebuild
+    # churn. Keep it under the server's ping interval (server pings every ~90 s).
+    warm_ping_interval_s: float = 60.0
+    # How long to wait for the pong before treating the connection as dead and
+    # reopening it. This is the client-side liveness timeout (we manage it, rather
+    # than letting the server's pong-timeout 1011-close us out from under a turn).
+    warm_ping_timeout_s: float = 10.0
+    # Optional periodic recycle of the warm connection (0 = off, the default now
+    # that the keepalive ping maintains liveness). Set >0 only to force a fresh
+    # connection every N seconds regardless of health.
+    warm_refresh_s: float = 0.0
     # Wait this long after a conversation closes before re-warming, so we don't
     # reconnect 1-2 s after disconnect — the rapid session churn the single-session
     # s2s server stalls on. Still well under a typical gap between wakes.
