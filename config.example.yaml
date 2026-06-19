@@ -115,14 +115,21 @@ media:
   duck_level: 0.25           # player volume (0..1) during a turn when on_turn: duck
   sendspin:
     enabled: false
-    binary: sendspin         # pip install sendspin
+    provider: cpp            # cpp = compiled sendspin-cpp basic_client (PortAudio,
+                             #       real volume role) | cli = pip-installed daemon
+    binary: null             # null = provider default ('sendspin-cpp' or 'sendspin');
+                             #        or an absolute path to a built basic_client
     name: null               # defaults to device.name
     server_url: null         # null = mDNS auto-discovery (Music Assistant finds it)
-    audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
     log_level: INFO
-    hardware_volume: false   # false = software per-stream volume so ducking the
-                             # music doesn't also duck the assistant's TTS
     extra_args: []
+    # cpp-only:
+    port: 8928               # WebSocket port the cpp client advertises via mDNS
+    # cli-only:
+    audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
+    hardware_volume: false   # false = software per-stream volume so ducking the
+                             # music doesn't also duck the assistant's TTS (cpp
+                             # always does music-only software volume)
   home_assistant:
     enabled: false
     base_url: null           # http://homeassistant.local:8123

@@ -6,8 +6,10 @@ from voiceagent.config import SendspinConfig
 from voiceagent.media import SendspinDaemon
 
 
-def test_argv_mdns_mode() -> None:
-    d = SendspinDaemon(SendspinConfig(name="kitchen"), default_name="dev")
+def test_argv_cli_mdns_mode() -> None:
+    d = SendspinDaemon(
+        SendspinConfig(provider="cli", name="kitchen"), default_name="dev"
+    )
     argv = d.argv()
     assert argv[:2] == ["sendspin", "daemon"]
     assert "--name" in argv and "kitchen" in argv
@@ -16,15 +18,42 @@ def test_argv_mdns_mode() -> None:
     assert argv[argv.index("--hardware-volume") + 1] == "false"
 
 
-def test_argv_with_url_and_device_and_extra() -> None:
+def test_argv_cli_with_url_and_device_and_extra() -> None:
     cfg = SendspinConfig(
-        name="den", server_url="ws://1.2.3.4:8928", audio_device="pipewire",
-        extra_args=["--disable-mpris"],
+        provider="cli", name="den", server_url="ws://1.2.3.4:8928",
+        audio_device="pipewire", extra_args=["--disable-mpris"],
     )
     argv = SendspinDaemon(cfg).argv()
     assert "--url" in argv and "ws://1.2.3.4:8928" in argv
     assert "--audio-device" in argv and "pipewire" in argv
     assert "--disable-mpris" in argv
+
+
+def test_argv_cpp_mdns_mode_is_default() -> None:
+    # cpp is the default provider: positional name, -l level, -p port, no url.
+    d = SendspinDaemon(SendspinConfig(name="kitchen"), default_name="dev")
+    argv = d.argv()
+    assert argv[0] == "sendspin-cpp"
+    assert argv[1] == "kitchen"  # positional friendly name
+    assert argv[argv.index("-l") + 1] == "info"  # INFO -> cpp's lowercase 'info'
+    assert argv[argv.index("-p") + 1] == "8928"
+    assert "-u" not in argv  # mDNS discovery mode
+    # no cli-only flags leak into the cpp invocation
+    assert "--hardware-volume" not in argv and "--audio-device" not in argv
+
+
+def test_argv_cpp_with_url_port_and_extra() -> None:
+    cfg = SendspinConfig(
+        name="den", server_url="ws://1.2.3.4:8928", port=8930,
+        log_level="WARNING", binary="/opt/sendspin/basic_client",
+        extra_args=["--foo"],
+    )
+    argv = SendspinDaemon(cfg).argv()
+    assert argv[0] == "/opt/sendspin/basic_client"  # explicit binary honored
+    assert "-u" in argv and "ws://1.2.3.4:8928" in argv
+    assert argv[argv.index("-p") + 1] == "8930"
+    assert argv[argv.index("-l") + 1] == "warn"  # WARNING -> 'warn'
+    assert "--foo" in argv
 
 
 def test_name_defaults_to_device_name() -> None:

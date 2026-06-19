@@ -228,22 +228,35 @@ class WakewordConfig(_StrictModel):
 class SendspinConfig(_StrictModel):
     """Managed sendspin player sidecar (device is the player).
 
-    Run with no ``server_url`` so the daemon advertises via mDNS
-    (``_sendspin._tcp.local.``) and Music Assistant auto-discovers it; MA then
-    mirrors it into Home Assistant as a media_player entity.
+    Two interchangeable backends advertise the same ``_sendspin._tcp.local.``
+    mDNS service, so Music Assistant auto-discovers either and mirrors it into
+    Home Assistant as a media_player entity — the rest of the stack is unchanged:
+
+    - ``cli``: the prebuilt ``sendspin`` daemon (``pip install sendspin``).
+    - ``cpp``: the compiled sendspin-cpp ``basic_client`` (PortAudio output, and
+      a real volume role so MA's ``volume_set`` actually takes effect).
     """
 
     enabled: bool = False
-    binary: str = "sendspin"
+    provider: Literal["cli", "cpp"] = "cpp"
+    # Binary to run. None resolves to a provider default: "sendspin" (cli) or
+    # "sendspin-cpp" (cpp). Override with an absolute path to a built binary.
+    binary: str | None = None
     name: str | None = None  # defaults to device.name when unset
     server_url: str | None = None  # ws://...; None => mDNS auto-discovery (preferred)
-    audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    extra_args: list[str] = Field(default_factory=list)
+
+    # ── cpp-only ──
+    port: int = 8928  # WebSocket listen port the cpp client advertises via mDNS
+
+    # ── cli-only ──
+    audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'
     # False = software (per-stream) volume so ducking only attenuates the music,
     # not the shared output device (which would also duck the assistant's TTS).
-    # True would control the system/hardware volume of the whole sink.
+    # True would control the system/hardware volume of the whole sink. (cpp always
+    # does music-only software volume in the PortAudio sink, so this is moot there.)
     hardware_volume: bool = False
-    extra_args: list[str] = Field(default_factory=list)
 
 
 class HomeAssistantConfig(_StrictModel):

@@ -20,8 +20,21 @@ from voiceagent.logging_setup import get_logger
 log = get_logger("media.sendspin")
 
 
+_DEFAULT_BINARY = {"cli": "sendspin", "cpp": "sendspin-cpp"}
+
+# sendspin-cpp's basic_client uses its own log-level vocabulary (-l), unlike the
+# cli's uppercase Python levels. Map ours onto it.
+_CPP_LOG_LEVEL = {
+    "DEBUG": "debug",
+    "INFO": "info",
+    "WARNING": "warn",
+    "ERROR": "error",
+    "CRITICAL": "error",
+}
+
+
 def _resolve_binary(binary: str) -> str:
-    """Resolve a bare ``sendspin`` to the venv's copy if it isn't on PATH."""
+    """Resolve a bare binary name to the venv's copy if it isn't on PATH."""
     if "/" in binary or shutil.which(binary):
         return binary
     candidate = Path(sys.executable).parent / binary
@@ -36,13 +49,29 @@ class SendspinDaemon:
         self._log_task: asyncio.Task[None] | None = None
 
     def argv(self) -> list[str]:
-        binary = _resolve_binary(self.cfg.binary)
+        binary = _resolve_binary(self.cfg.binary or _DEFAULT_BINARY[self.cfg.provider])
+        if self.cfg.provider == "cpp":
+            return self._argv_cpp(binary)
+        return self._argv_cli(binary)
+
+    def _argv_cli(self, binary: str) -> list[str]:
         argv = [binary, "daemon", "--name", self.name, "--log-level", self.cfg.log_level]
         argv += ["--hardware-volume", "true" if self.cfg.hardware_volume else "false"]
         if self.cfg.server_url:
             argv += ["--url", self.cfg.server_url]
         if self.cfg.audio_device:
             argv += ["--audio-device", self.cfg.audio_device]
+        argv += self.cfg.extra_args
+        return argv
+
+    def _argv_cpp(self, binary: str) -> list[str]:
+        # basic_client: positional name, -p port, -u url, -l level. No
+        # audio-device/hardware-volume flags (PortAudio default sink, music-only
+        # software volume wired through the protocol's volume role).
+        argv = [binary, self.name, "-l", _CPP_LOG_LEVEL[self.cfg.log_level]]
+        argv += ["-p", str(self.cfg.port)]
+        if self.cfg.server_url:
+            argv += ["-u", self.cfg.server_url]
         argv += self.cfg.extra_args
         return argv
 
@@ -61,9 +90,16 @@ class SendspinDaemon:
                 stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError as exc:
+            hint = (
+                "build sendspin-cpp (scripts/build-sendspin-cpp.sh) and set "
+                "media.sendspin.binary to the basic_client path"
+                if self.cfg.provider == "cpp"
+                else "install it (pip install sendspin)"
+            )
             raise RuntimeError(
-                f"sendspin binary not found: {self.cfg.binary!r}. Install it "
-                f"(pip install sendspin) or set media.sendspin.binary / disable it."
+                f"sendspin binary not found: {argv[0]!r} (provider="
+                f"{self.cfg.provider!r}). {hint}, or set media.sendspin.binary / "
+                f"disable it."
             ) from exc
         self._log_task = asyncio.create_task(self._forward_logs())
 
