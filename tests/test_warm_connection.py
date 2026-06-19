@@ -40,7 +40,7 @@ class FakePingWS:
         self.pings = 0
         self.fail = fail
 
-    async def ping(self) -> "asyncio.Future[bytes]":
+    async def ping(self) -> asyncio.Future[bytes]:
         self.pings += 1
         if self.fail:
             raise RuntimeError("connection closed")

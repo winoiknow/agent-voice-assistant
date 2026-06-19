@@ -28,8 +28,8 @@ voiceagent init --force          # re-run the wizard
 ```
 
 > ### ⏱️ Time sync is essential
-> sendspin's multi-room playback is **clock-driven**: the SBC and your **Music
-> Assistant** host **must share the same time source**, or playback sync drifts and
+> the sendspin player's multi-room playback is **clock-driven**: the SBC and your
+> **Music Assistant** host **must share the same time source**, or playback sync drifts and
 > start/resume buffering gets worse. Install **chrony** (the installer does) and
 > point both machines at the **same NTP server**.
 
@@ -39,6 +39,28 @@ voiceagent init --force          # re-run the wizard
 > (`audio.capture_channels: 2`, `capture_pick_channel: 0`); the wizard sets this.
 > CH0 is the hardware-AEC'd/beamformed channel; capturing the raw stereo downmix
 > reintroduces speaker echo (false wakes, barge-ins, STT hallucinations).
+
+### Music player (sendspin-cpp)
+
+The device is a [sendspin](https://github.com/Sendspin/sendspin-cpp) player so Music
+Assistant can stream to it (and the assistant can act as a DJ). The installer builds
+the native **sendspin-cpp `basic_client`** from source via
+`scripts/build-sendspin-cpp.sh` — installed to `~/.local/bin/sendspin-cpp` — and the
+app supervises it as a sidecar (`media.sendspin.enabled`). It:
+
+- advertises over **mDNS** (`_sendspin._tcp`), so MA auto-discovers it and mirrors it
+  into Home Assistant as a `media_player` entity — **requires the system
+  `avahi-daemon`** (the installer installs and enables it);
+- plays to the **PortAudio default sink** (the XVF3800) with **music-only software
+  volume** — ducking the music never touches the assistant's TTS;
+- implements the protocol's **volume role**, so MA's `volume_set` (and the agent's
+  Music-Assistant volume tool) land directly and audibly. *(This replaces an earlier
+  Python `sendspin` CLI that didn't truly implement volume, which forced a turn-end
+  replay workaround — now removed.)*
+
+Our build applies one patch (`patches/sendspin-cpp/`) giving the client a **stable,
+name-derived id**, so each device is its own MA player. Point
+`media.home_assistant.media_player_entity` at the entity MA assigns it.
 
 ## Updating & uninstalling
 
@@ -267,8 +289,7 @@ Events worth grepping when something looks wrong:
 | `turn_watchdog_fired`       | A turn got no response within `realtime.turn_watchdog_s`; aborted. |
 | `realtime_error`            | The s2s server returned an error frame (`type`, `message`).        |
 | `closer_detected`           | A closer phrase ended the turn.                                    |
-| `music_ducked` / `music_unducked` | Player attenuated at engage / restored at close (`to=`, `agent_requested=`, `agent_changed=`). |
-| `volume_request_noted`      | Captured an agent "set volume" tool call to re-apply at turn end (`level`, `ha`). |
+| `music_ducked` / `music_unducked` | Player attenuated at engage / restored at close (`to=`, `agent_changed=` — kept the agent's mid-turn volume change instead of restoring). |
 | `tool_call` (`name=…`)      | An agent tool call s2s forwarded (most run invisibly in the agent). |
 | `warm_connection_ready` / `realtime_using_warm_connection` | Warm s2s connection armed / reused for a wake. |
 | `heartbeat`                 | Periodic metrics snapshot (mirrors `metrics.json`).               |
@@ -280,13 +301,13 @@ jq -r 'select(.event|IN("turn_watchdog_fired","realtime_error","music_restore_fa
        | "\(.timestamp) \(.event) \(.message // .error // "")"' "$LOG"
 ```
 
-> **"Set the volume" gets confirmed but doesn't change.** The agent sets volume via
-> a Music Assistant tool mid-turn, but MA can drop that command while the player is
-> busy during TTS. The client works around it: it captures the requested level
-> (`volume_request_noted`) and re-applies it via Home Assistant at turn end
-> (`music_unducked … agent_requested=true`). If the new volume doesn't stick, check
-> the log for those two lines — `volume_request_noted` missing means the tool call /
-> its arguments never reached the client.
+> **"Set the volume" gets confirmed but doesn't change.** With the sendspin-cpp
+> player, MA's `volume_set` lands directly on the audible player, so this should just
+> work (the agent's Music-Assistant volume tool too). If it doesn't: confirm the
+> player is the cpp one (`media_player.*` shows a real `volume_level`, not `null`) and
+> that `avahi-daemon` is running so MA actually reached it. *(The old Python
+> `sendspin` CLI didn't implement volume — MA dropped the command as "unavailable
+> player" — which is exactly why we moved to sendspin-cpp.)*
 
 ## Multi-device wake arbitration
 
@@ -326,7 +347,7 @@ and `respeaker.simulate: true`, so they work on a laptop too.
 | `voiceagent respeaker-tune` | Apply the configured XVF3800 DSP tuning and read it back. |
 | `voiceagent wake-test [-s N]` | Listen for the wake word and print detections + latency. |
 | `voiceagent realtime-test [-s N]` | One full conversation against the s2s server. |
-| `voiceagent media-test [-s N]` | Run the sendspin daemon for Music Assistant discovery. |
+| `voiceagent media-test [-s N]` | Run the sendspin-cpp player for Music Assistant discovery. |
 | `voiceagent arbitration-test [-s N]` | Multi-device wake arbitration over UDP (run on each unit). |
 
 ## Feature knobs at a glance

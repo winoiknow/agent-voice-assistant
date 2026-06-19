@@ -2,9 +2,9 @@
 # agent-voice-assistant installer.
 #   curl -fsSL https://raw.githubusercontent.com/winoiknow/agent-voice-assistant/main/install.sh | bash
 #
-# Installs system deps, the package + on-device extras, the reSpeaker xvf_host
-# control binary, a udev rule, runs the config wizard, and registers a systemd
-# user service. Idempotent — safe to re-run to update.
+# Installs system deps, the package + on-device extras, builds the sendspin-cpp
+# music player, the reSpeaker xvf_host control binary, a udev rule, runs the
+# config wizard, and registers a systemd user service. Idempotent — re-run to update.
 set -euo pipefail
 
 REPO_URL="${VOICEAGENT_REPO:-https://github.com/winoiknow/agent-voice-assistant.git}"
@@ -18,11 +18,18 @@ warn() { printf '\033[1;33m WARN:\033[0m %s\n' "$*"; }
 arch="$(uname -m)"
 [ "$arch" = "aarch64" ] || warn "architecture is '$arch'; the vendored xvf_host is aarch64 only."
 
-# 1. System packages (chrony: sendspin's playback sync is clock-driven).
+# 1. System packages. chrony: the player's playback sync is clock-driven.
+#    cmake/build-essential/portaudio19-dev: build the sendspin-cpp player.
+#    libavahi-compat-libdnssd-dev + avahi-daemon: the player advertises over mDNS
+#    via the Avahi compat layer, so the daemon must be installed AND running for
+#    Music Assistant to discover it.
 say "Installing system packages (sudo may prompt)"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  git python3-venv python3-pip libportaudio2 alsa-utils curl chrony
+  git python3-venv python3-pip alsa-utils curl chrony \
+  cmake build-essential portaudio19-dev libavahi-compat-libdnssd-dev avahi-daemon
+sudo systemctl enable --now avahi-daemon 2>/dev/null || \
+  warn "could not enable avahi-daemon; sendspin-cpp mDNS discovery needs it running."
 
 # 2. Clone or update the repo. When updating, stop a running service first so we
 #    don't swap the venv / code (and the sendspin child) out from under it.
@@ -55,7 +62,12 @@ python3 -m venv .venv
 pip install --quiet --upgrade pip
 pip install --quiet -e ".[audio,wakeword,realtime,media]"
 pip install --quiet --no-deps openwakeword
-pip install --quiet sendspin
+
+# 3b. Build the sendspin-cpp player from source and install it to ~/.local/bin
+#     (build deps were installed in step 1, so skip the script's apt step). This
+#     also applies our patch giving the player a stable, name-derived client id.
+say "Building the sendspin-cpp player (slow on an SBC — first build only)"
+bash scripts/build-sendspin-cpp.sh --no-deps --install
 
 # 4. Vendor the reSpeaker xvf_host control binary (aarch64 build).
 if [ "$arch" = "aarch64" ] && [ ! -x "vendor/xvf_host/xvf_host" ]; then
@@ -143,8 +155,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-# Put the venv on PATH so the sendspin sidecar (installed in the venv) resolves.
-Environment=PATH=$INSTALL_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin
+# Put ~/.local/bin on PATH so the sendspin-cpp player resolves, plus the venv.
+Environment=PATH=$HOME/.local/bin:$INSTALL_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=$INSTALL_DIR/.venv/bin/voiceagent run --config $CONFIG_DIR/config.yaml
 EnvironmentFile=-$CONFIG_DIR/secrets.env
 Restart=on-failure
