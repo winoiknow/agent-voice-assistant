@@ -69,7 +69,8 @@ class SendspinDaemon:
         # audio-device/hardware-volume flags (PortAudio default sink, music-only
         # software volume wired through the protocol's volume role).
         argv = [binary, self.name, "-l", _CPP_LOG_LEVEL[self.cfg.log_level]]
-        argv += ["-p", str(self.cfg.port)]
+        if self.cfg.port is not None:  # v0.6.1 basic_client has no -p (fixed 8928)
+            argv += ["-p", str(self.cfg.port)]
         if self.cfg.server_url:
             argv += ["-u", self.cfg.server_url]
         argv += self.cfg.extra_args

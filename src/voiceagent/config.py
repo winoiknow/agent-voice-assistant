@@ -248,7 +248,10 @@ class SendspinConfig(_StrictModel):
     extra_args: list[str] = Field(default_factory=list)
 
     # ── cpp-only ──
-    port: int = 8928  # WebSocket listen port the cpp client advertises via mDNS
+    # WebSocket listen port the cpp client advertises via mDNS. None => omit the
+    # flag and use the binary's default (8928). The v0.6.1 basic_client has NO
+    # port flag (fixed 8928); only set this if your build adds `-p`.
+    port: int | None = None
 
     # ── cli-only ──
     audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'

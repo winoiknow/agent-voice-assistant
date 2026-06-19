@@ -36,7 +36,7 @@ def test_argv_cpp_mdns_mode_is_default() -> None:
     assert argv[0] == "sendspin-cpp"
     assert argv[1] == "kitchen"  # positional friendly name
     assert argv[argv.index("-l") + 1] == "info"  # INFO -> cpp's lowercase 'info'
-    assert argv[argv.index("-p") + 1] == "8928"
+    assert "-p" not in argv  # v0.6.1 basic_client has no port flag (fixed 8928)
     assert "-u" not in argv  # mDNS discovery mode
     # no cli-only flags leak into the cpp invocation
     assert "--hardware-volume" not in argv and "--audio-device" not in argv

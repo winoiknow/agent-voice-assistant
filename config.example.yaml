@@ -124,7 +124,8 @@ media:
     log_level: INFO
     extra_args: []
     # cpp-only:
-    port: 8928               # WebSocket port the cpp client advertises via mDNS
+    port: null               # null = binary default (8928). The v0.6.1 basic_client
+                             # has no -p flag; only set if your build adds one.
     # cli-only:
     audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
     hardware_volume: false   # false = software per-stream volume so ducking the
