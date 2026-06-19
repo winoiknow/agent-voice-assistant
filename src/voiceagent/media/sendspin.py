@@ -1,9 +1,13 @@
-"""Supervise the sendspin player daemon as a sidecar.
+"""Supervise the sendspin-cpp ``basic_client`` player as a sidecar.
 
-With no ``--url`` the daemon advertises via mDNS and Music Assistant auto-discovers
+With no ``-u`` URL the client advertises via mDNS and Music Assistant auto-discovers
 it (which then mirrors it into Home Assistant as a media_player entity). This class
 just owns the subprocess lifecycle (start/stop, log forwarding); pause/resume and
-ducking are handled via Home Assistant + local PipeWire in later Phase-7 steps.
+ducking are handled via Home Assistant + local PipeWire.
+
+Note: the client uses the Avahi compat layer for mDNS, so the host must run the
+system ``avahi-daemon`` for discovery to work (build it with
+``scripts/build-sendspin-cpp.sh``).
 """
 
 from __future__ import annotations
@@ -20,10 +24,9 @@ from voiceagent.logging_setup import get_logger
 log = get_logger("media.sendspin")
 
 
-_DEFAULT_BINARY = {"cli": "sendspin", "cpp": "sendspin-cpp"}
+_DEFAULT_BINARY = "sendspin-cpp"
 
-# sendspin-cpp's basic_client uses its own log-level vocabulary (-l), unlike the
-# cli's uppercase Python levels. Map ours onto it.
+# sendspin-cpp's basic_client uses its own log-level vocabulary (-l).
 _CPP_LOG_LEVEL = {
     "DEBUG": "debug",
     "INFO": "info",
@@ -49,25 +52,11 @@ class SendspinDaemon:
         self._log_task: asyncio.Task[None] | None = None
 
     def argv(self) -> list[str]:
-        binary = _resolve_binary(self.cfg.binary or _DEFAULT_BINARY[self.cfg.provider])
-        if self.cfg.provider == "cpp":
-            return self._argv_cpp(binary)
-        return self._argv_cli(binary)
-
-    def _argv_cli(self, binary: str) -> list[str]:
-        argv = [binary, "daemon", "--name", self.name, "--log-level", self.cfg.log_level]
-        argv += ["--hardware-volume", "true" if self.cfg.hardware_volume else "false"]
-        if self.cfg.server_url:
-            argv += ["--url", self.cfg.server_url]
-        if self.cfg.audio_device:
-            argv += ["--audio-device", self.cfg.audio_device]
-        argv += self.cfg.extra_args
-        return argv
-
-    def _argv_cpp(self, binary: str) -> list[str]:
-        # basic_client: positional name, -p port, -u url, -l level. No
-        # audio-device/hardware-volume flags (PortAudio default sink, music-only
-        # software volume wired through the protocol's volume role).
+        # sendspin-cpp basic_client: positional name, -l level, -i client_id,
+        # -u url. No audio-device/hardware-volume flags — it plays to the
+        # PortAudio default sink with music-only software volume wired through
+        # the protocol's volume role.
+        binary = _resolve_binary(self.cfg.binary or _DEFAULT_BINARY)
         argv = [binary, self.name, "-l", _CPP_LOG_LEVEL[self.cfg.log_level]]
         if self.cfg.client_id:  # else the patched binary derives a slug from name
             argv += ["-i", self.cfg.client_id]
@@ -93,16 +82,10 @@ class SendspinDaemon:
                 stderr=asyncio.subprocess.STDOUT,
             )
         except FileNotFoundError as exc:
-            hint = (
-                "build sendspin-cpp (scripts/build-sendspin-cpp.sh) and set "
-                "media.sendspin.binary to the basic_client path"
-                if self.cfg.provider == "cpp"
-                else "install it (pip install sendspin)"
-            )
             raise RuntimeError(
-                f"sendspin binary not found: {argv[0]!r} (provider="
-                f"{self.cfg.provider!r}). {hint}, or set media.sendspin.binary / "
-                f"disable it."
+                f"sendspin-cpp binary not found: {argv[0]!r}. Build it with "
+                f"scripts/build-sendspin-cpp.sh (and set media.sendspin.binary to "
+                f"the basic_client path if it isn't on PATH), or disable it."
             ) from exc
         self._log_task = asyncio.create_task(self._forward_logs())
 

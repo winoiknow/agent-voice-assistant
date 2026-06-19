@@ -226,44 +226,32 @@ class WakewordConfig(_StrictModel):
 
 
 class SendspinConfig(_StrictModel):
-    """Managed sendspin player sidecar (device is the player).
+    """Managed sendspin-cpp ``basic_client`` player sidecar (device is the player).
 
-    Two interchangeable backends advertise the same ``_sendspin._tcp.local.``
-    mDNS service, so Music Assistant auto-discovers either and mirrors it into
-    Home Assistant as a media_player entity — the rest of the stack is unchanged:
-
-    - ``cli``: the prebuilt ``sendspin`` daemon (``pip install sendspin``).
-    - ``cpp``: the compiled sendspin-cpp ``basic_client`` (PortAudio output, and
-      a real volume role so MA's ``volume_set`` actually takes effect).
+    The client advertises ``_sendspin._tcp.local.`` via mDNS, so Music Assistant
+    auto-discovers it and mirrors it into Home Assistant as a media_player entity.
+    It plays to the PortAudio default sink with music-only software volume wired
+    through the protocol's volume role (so MA's ``volume_set`` actually takes
+    effect). Requires the system ``avahi-daemon`` for mDNS; build the binary with
+    ``scripts/build-sendspin-cpp.sh``.
     """
 
     enabled: bool = False
-    provider: Literal["cli", "cpp"] = "cpp"
-    # Binary to run. None resolves to a provider default: "sendspin" (cli) or
-    # "sendspin-cpp" (cpp). Override with an absolute path to a built binary.
+    # Binary to run. None resolves to "sendspin-cpp" (on PATH); or set an absolute
+    # path to a built basic_client.
     binary: str | None = None
     name: str | None = None  # defaults to device.name when unset
-    server_url: str | None = None  # ws://...; None => mDNS auto-discovery (preferred)
+    server_url: str | None = None  # -u ws://...; None => mDNS auto-discovery (preferred)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     extra_args: list[str] = Field(default_factory=list)
-
-    # ── cpp-only ──
-    # WebSocket listen port the cpp client advertises via mDNS. None => omit the
-    # flag and use the binary's default (8928). The v0.6.1 basic_client has NO
-    # port flag (fixed 8928); only set this if your build adds `-p`.
+    # WebSocket listen port the client advertises via mDNS. None => omit the flag
+    # and use the binary's default (8928). The v0.6.1 basic_client has NO port
+    # flag (fixed 8928); only set this if your build adds `-p`.
     port: int | None = None
-    # Stable client id sent via `-i` (our patched basic_client). None => the
-    # binary derives it from `name` (a slug), which is unique per device. Set it
-    # explicitly only to pin a specific Music Assistant player/entity identity.
+    # Stable client id sent via `-i` (our patched basic_client). None => the binary
+    # derives it from `name` (a slug), which is unique per device. Set it explicitly
+    # only to pin a specific Music Assistant player/entity identity.
     client_id: str | None = None
-
-    # ── cli-only ──
-    audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'
-    # False = software (per-stream) volume so ducking only attenuates the music,
-    # not the shared output device (which would also duck the assistant's TTS).
-    # True would control the system/hardware volume of the whole sink. (cpp always
-    # does music-only software volume in the PortAudio sink, so this is moot there.)
-    hardware_volume: bool = False
 
 
 class HomeAssistantConfig(_StrictModel):

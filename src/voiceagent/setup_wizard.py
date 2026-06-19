@@ -86,8 +86,6 @@ def build_config(
         media["sendspin"] = {
             "enabled": True,
             "name": answers.get("sendspin_name") or answers["device_name"],
-            "audio_device": "default",
-            "hardware_volume": False,
         }
     if answers.get("ha_enabled"):
         media["home_assistant"] = {

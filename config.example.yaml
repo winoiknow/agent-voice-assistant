@@ -113,26 +113,18 @@ media:
   on_turn: duck              # duck = lower volume, keep stream (instant resume,
                              #        keeps AEC converged); pause = true pause
   duck_level: 0.25           # player volume (0..1) during a turn when on_turn: duck
-  sendspin:
+  sendspin:                  # sendspin-cpp basic_client (build: scripts/build-sendspin-cpp.sh;
+                             # needs the system avahi-daemon for mDNS discovery)
     enabled: false
-    provider: cpp            # cpp = compiled sendspin-cpp basic_client (PortAudio,
-                             #       real volume role) | cli = pip-installed daemon
-    binary: null             # null = provider default ('sendspin-cpp' or 'sendspin');
-                             #        or an absolute path to a built basic_client
+    binary: null             # null = 'sendspin-cpp' on PATH; or an absolute path to basic_client
     name: null               # defaults to device.name
     server_url: null         # null = mDNS auto-discovery (Music Assistant finds it)
     log_level: INFO
     extra_args: []
-    # cpp-only:
-    port: null               # null = binary default (8928). The v0.6.1 basic_client
-                             # has no -p flag; only set if your build adds one.
-    client_id: null          # null = patched basic_client derives a stable slug from
-                             # name (unique per device). Set to pin a specific MA player.
-    # cli-only:
-    audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
-    hardware_volume: false   # false = software per-stream volume so ducking the
-                             # music doesn't also duck the assistant's TTS (cpp
-                             # always does music-only software volume)
+    port: null               # null = binary default (8928). v0.6.1 basic_client has
+                             # no -p flag; only set if your build adds one.
+    client_id: null          # null = basic_client derives a stable slug from name
+                             # (unique per device). Set to pin a specific MA player.
   home_assistant:
     enabled: false
     base_url: null           # http://homeassistant.local:8123

@@ -6,31 +6,8 @@ from voiceagent.config import SendspinConfig
 from voiceagent.media import SendspinDaemon
 
 
-def test_argv_cli_mdns_mode() -> None:
-    d = SendspinDaemon(
-        SendspinConfig(provider="cli", name="kitchen"), default_name="dev"
-    )
-    argv = d.argv()
-    assert argv[:2] == ["sendspin", "daemon"]
-    assert "--name" in argv and "kitchen" in argv
-    assert "--url" not in argv  # mDNS discovery mode
-    # software volume so ducking the player doesn't duck the shared device
-    assert argv[argv.index("--hardware-volume") + 1] == "false"
-
-
-def test_argv_cli_with_url_and_device_and_extra() -> None:
-    cfg = SendspinConfig(
-        provider="cli", name="den", server_url="ws://1.2.3.4:8928",
-        audio_device="pipewire", extra_args=["--disable-mpris"],
-    )
-    argv = SendspinDaemon(cfg).argv()
-    assert "--url" in argv and "ws://1.2.3.4:8928" in argv
-    assert "--audio-device" in argv and "pipewire" in argv
-    assert "--disable-mpris" in argv
-
-
-def test_argv_cpp_mdns_mode_is_default() -> None:
-    # cpp is the default provider: positional name, -l level, -p port, no url.
+def test_argv_mdns_mode_is_default() -> None:
+    # positional name, -l level, no url (mDNS discovery), no port flag.
     d = SendspinDaemon(SendspinConfig(name="kitchen"), default_name="dev")
     argv = d.argv()
     assert argv[0] == "sendspin-cpp"
@@ -38,12 +15,10 @@ def test_argv_cpp_mdns_mode_is_default() -> None:
     assert argv[argv.index("-l") + 1] == "info"  # INFO -> cpp's lowercase 'info'
     assert "-p" not in argv  # v0.6.1 basic_client has no port flag (fixed 8928)
     assert "-u" not in argv  # mDNS discovery mode
-    assert "-i" not in argv  # no client_id set -> patched binary derives a slug
-    # no cli-only flags leak into the cpp invocation
-    assert "--hardware-volume" not in argv and "--audio-device" not in argv
+    assert "-i" not in argv  # no client_id set -> binary derives a slug
 
 
-def test_argv_cpp_pins_client_id_when_set() -> None:
+def test_argv_pins_client_id_when_set() -> None:
     cfg = SendspinConfig(name="ha-panel-voice", client_id="ha-panel-voice")
     argv = SendspinDaemon(cfg).argv()
     assert argv[argv.index("-i") + 1] == "ha-panel-voice"

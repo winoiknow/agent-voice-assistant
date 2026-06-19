@@ -39,7 +39,7 @@ def test_build_config_structure_and_secrets() -> None:
     assert config["audio"]["capture_device"] == "default"
     assert config["respeaker"]["xvf_host_path"] == "/opt/xvf_host"
     assert config["media"]["on_turn"] == "duck"
-    assert config["media"]["sendspin"]["hardware_volume"] is False
+    assert config["media"]["sendspin"]["enabled"] is True
     assert config["media"]["home_assistant"]["media_player_entity"] == "media_player.ha_panel_voice"
     # secrets are separated out, never in config
     assert secrets["VOICEAGENT_REALTIME__API_KEY"] == "sk-abc"
