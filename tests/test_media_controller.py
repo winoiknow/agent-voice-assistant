@@ -111,46 +111,6 @@ async def test_unduck_restores_when_agent_left_volume_alone() -> None:
     await mc.stop()
 
 
-async def test_agent_volume_request_applied_at_turn_end() -> None:
-    # The agent asked to set volume to 70 (MA scale 0-100). MA drops it mid-turn, so
-    # we capture it from the tool args and apply 0.70 via HA at close.
-    ha = FakeHA(playing=True, volume=0.4)
-    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
-    await mc.start()
-    await mc.on_turn_start()
-    assert ha.volume == 0.25  # ducked
-    mc.note_volume_request(
-        "mcp_mcpjungle_Music_Assistant__volume_volume_set",
-        '{"player_id": "p", "level": 70}',
-    )
-    await mc.on_turn_end()
-    assert ha.volume == 0.7  # requested level applied, not the pre-turn 0.4
-    await mc.stop()
-
-
-async def test_agent_volume_request_accepts_fraction() -> None:
-    ha = FakeHA(playing=True, volume=0.4)
-    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
-    await mc.start()
-    await mc.on_turn_start()
-    mc.note_volume_request("x__volume_group_volume_set", '{"level": 0.3}')
-    await mc.on_turn_end()
-    assert ha.volume == 0.3
-    await mc.stop()
-
-
-async def test_non_volume_tool_call_is_ignored() -> None:
-    ha = FakeHA(playing=True, volume=0.4)
-    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
-    await mc.start()
-    await mc.on_turn_start()
-    mc.note_volume_request("x__playback_play_media", '{"uri": "spotify:foo"}')
-    mc.note_volume_request("x__volume_volume_set", "not json")
-    await mc.on_turn_end()
-    assert ha.volume == 0.4  # no request captured -> restore pre-turn volume
-    await mc.stop()
-
-
 async def test_pause_mode_on_turn_start_resume_on_end() -> None:
     ha = FakeHA(playing=True)
     mc = _controller(_settings(media_over={"on_turn": "pause"}), ha)

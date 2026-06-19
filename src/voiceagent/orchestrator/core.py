@@ -270,13 +270,6 @@ class Orchestrator:
             # Visible only if s2s forwards it; tools that run inside the Hermes
             # agent stay invisible (their latency is part of the THINKING gap).
             log.info("tool_call", name=event.get("name"))
-            # MA drops the agent's volume command while the player is busy mid-turn,
-            # so capture the requested level here and re-apply it at turn end.
-            if self.media is not None:
-                with contextlib.suppress(Exception):
-                    self.media.note_volume_request(
-                        event.get("name", ""), event.get("arguments", "")
-                    )
         elif kind == "user_transcript" and event.get("final"):
             if is_closer(event.get("text", ""), self.settings.realtime.closer_phrases):
                 log.info("closer_detected", text=event.get("text", ""))
