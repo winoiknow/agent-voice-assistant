@@ -38,8 +38,15 @@ def test_argv_cpp_mdns_mode_is_default() -> None:
     assert argv[argv.index("-l") + 1] == "info"  # INFO -> cpp's lowercase 'info'
     assert "-p" not in argv  # v0.6.1 basic_client has no port flag (fixed 8928)
     assert "-u" not in argv  # mDNS discovery mode
+    assert "-i" not in argv  # no client_id set -> patched binary derives a slug
     # no cli-only flags leak into the cpp invocation
     assert "--hardware-volume" not in argv and "--audio-device" not in argv
+
+
+def test_argv_cpp_pins_client_id_when_set() -> None:
+    cfg = SendspinConfig(name="ha-panel-voice", client_id="ha-panel-voice")
+    argv = SendspinDaemon(cfg).argv()
+    assert argv[argv.index("-i") + 1] == "ha-panel-voice"
 
 
 def test_argv_cpp_with_url_port_and_extra() -> None:

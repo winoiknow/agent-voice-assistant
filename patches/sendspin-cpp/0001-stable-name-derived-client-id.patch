@@ -1,0 +1,68 @@
+diff --git a/examples/basic_client/main.cpp b/examples/basic_client/main.cpp
+index 814ddd6..17850a4 100644
+--- a/examples/basic_client/main.cpp
++++ b/examples/basic_client/main.cpp
+@@ -49,6 +49,7 @@
+ #include <chrono>
+ #include <csignal>
+ #include <cstdio>
++#include <cctype>
+ #include <cstring>
+ #include <string>
+ #include <thread>
+@@ -127,6 +128,7 @@ static void print_usage(const char* prog) {
+     fprintf(stderr, "  name          Friendly name (default: \"Basic Client\")\n\n");
+     fprintf(stderr, "Options:\n");
+     fprintf(stderr, "  -u URL        Connect to a WebSocket URL (e.g. ws://192.168.1.10:8928/sendspin)\n");
++    fprintf(stderr, "  -i ID         Stable unique client id (default: slug of name)\n");
+     fprintf(stderr, "  -l LEVEL      Log level: none, error, warn, info (default), debug, verbose\n");
+     fprintf(stderr, "  -v            Verbose logging (same as -l verbose)\n");
+     fprintf(stderr, "  -q            Quiet logging (same as -l error)\n");
+@@ -143,6 +145,20 @@ static bool parse_log_level(const char* str, LogLevel& level) {
+     return false;
+ }
+
++// Derive a stable, unique client id from the friendly name so each device is
++// a distinct Music Assistant player (the stock example hardcoded one shared
++// id, which collapsed every device onto the same MA player/entity).
++static std::string slugify(const std::string& s) {
++    std::string out;
++    for (char c : s) {
++        unsigned char uc = static_cast<unsigned char>(c);
++        if (std::isalnum(uc)) out += static_cast<char>(std::tolower(uc));
++        else if (!out.empty() && out.back() != '-') out += '-';
++    }
++    while (!out.empty() && out.back() == '-') out.pop_back();
++    return out.empty() ? "sendspin-cpp" : out;
++}
++
+ int main(int argc, char* argv[]) {
+     // Set up signal handler for clean shutdown
+     std::signal(SIGINT, signal_handler);
+@@ -151,12 +167,16 @@ int main(int argc, char* argv[]) {
+     // Parse command line options
+     LogLevel log_level = LogLevel::INFO;
+     std::string connect_url;
++    std::string client_id_arg;
+     int opt;
+-    while ((opt = getopt(argc, argv, "u:l:vqh")) != -1) {
++    while ((opt = getopt(argc, argv, "u:l:i:vqh")) != -1) {
+         switch (opt) {
+             case 'u':
+                 connect_url = optarg;
+                 break;
++            case 'i':
++                client_id_arg = optarg;
++                break;
+             case 'l':
+                 if (!parse_log_level(optarg, log_level)) {
+                     fprintf(stderr, "Unknown log level: %s\n", optarg);
+@@ -186,7 +206,7 @@ int main(int argc, char* argv[]) {
+
+     // Configure the client
+     SendspinClientConfig config;
+-    config.client_id = "basic-client-example";
++    config.client_id = client_id_arg.empty() ? slugify(friendly_name) : client_id_arg;
+     config.name = friendly_name;
+     config.product_name = "sendspin-cpp host example";
+     config.manufacturer = "sendspin-cpp";

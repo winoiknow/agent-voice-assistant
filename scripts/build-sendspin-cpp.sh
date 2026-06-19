@@ -48,6 +48,26 @@ else
   git clone --quiet "$REPO" "$SRC_DIR"
 fi
 git -C "$SRC_DIR" checkout --quiet "$REF"
+# Discard any prior applied patch so re-runs start clean, then re-apply.
+git -C "$SRC_DIR" checkout --quiet -- examples/basic_client/main.cpp 2>/dev/null || true
+
+# Apply our patches (idempotent: skip any already present). The key one gives
+# basic_client a stable, name-derived client_id so each device is a distinct MA
+# player instead of the example's hardcoded shared id.
+PATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/patches/sendspin-cpp"
+if [[ -d "$PATCH_DIR" ]]; then
+  for p in "$PATCH_DIR"/*.patch; do
+    [[ -e "$p" ]] || continue
+    if git -C "$SRC_DIR" apply --check "$p" 2>/dev/null; then
+      git -C "$SRC_DIR" apply "$p" && echo ">> applied patch: $(basename "$p")"
+    elif git -C "$SRC_DIR" apply --reverse --check "$p" 2>/dev/null; then
+      echo ">> patch already applied: $(basename "$p")"
+    else
+      echo "!! patch failed to apply: $(basename "$p") (does it match $REF?)" >&2
+      exit 1
+    fi
+  done
+fi
 
 echo ">> configuring + building (this is slow on an SBC)…"
 cmake -S "$SRC_DIR" -B "$SRC_DIR/build" -DCMAKE_BUILD_TYPE=Release

@@ -252,6 +252,10 @@ class SendspinConfig(_StrictModel):
     # flag and use the binary's default (8928). The v0.6.1 basic_client has NO
     # port flag (fixed 8928); only set this if your build adds `-p`.
     port: int | None = None
+    # Stable client id sent via `-i` (our patched basic_client). None => the
+    # binary derives it from `name` (a slug), which is unique per device. Set it
+    # explicitly only to pin a specific Music Assistant player/entity identity.
+    client_id: str | None = None
 
     # ── cli-only ──
     audio_device: str | None = None  # index / name prefix / ALSA / 'pulse'|'pipewire'

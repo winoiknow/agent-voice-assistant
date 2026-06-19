@@ -126,6 +126,8 @@ media:
     # cpp-only:
     port: null               # null = binary default (8928). The v0.6.1 basic_client
                              # has no -p flag; only set if your build adds one.
+    client_id: null          # null = patched basic_client derives a stable slug from
+                             # name (unique per device). Set to pin a specific MA player.
     # cli-only:
     audio_device: null       # index / name prefix / ALSA / 'pulse' | 'pipewire'
     hardware_volume: false   # false = software per-stream volume so ducking the
