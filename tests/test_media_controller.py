@@ -111,6 +111,21 @@ async def test_unduck_restores_when_agent_left_volume_alone() -> None:
     await mc.stop()
 
 
+async def test_duck_skipped_when_already_at_or_below_duck_level() -> None:
+    # Player already muted (0.0). Ducking would set 0.25 then "restore" to the
+    # saved 0.0 on close, re-cementing the mute every turn. Guard: leave it alone.
+    ha = FakeHA(playing=True, volume=0.0)
+    mc = _controller(_settings(media_over={"duck_level": 0.25}), ha)
+    await mc.start()
+    await mc.on_turn_start()
+    assert ha.calls == []  # never touched the volume
+    assert ha.volume == 0.0
+    await mc.on_turn_end()
+    assert ha.calls == []  # nothing restored -> no mute trap
+    assert ha.volume == 0.0
+    await mc.stop()
+
+
 async def test_pause_mode_on_turn_start_resume_on_end() -> None:
     ha = FakeHA(playing=True)
     mc = _controller(_settings(media_over={"on_turn": "pause"}), ha)

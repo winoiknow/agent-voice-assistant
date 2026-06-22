@@ -104,7 +104,16 @@ class MediaController:
                 self._paused = True
                 log.info("music_paused", entity=self._entity)
             else:  # duck: lower the player volume up front; restore it on close.
-                self._saved_volume = await self._ha.get_volume(self._entity)
+                saved = await self._ha.get_volume(self._entity)
+                # If the player is already at/below the duck level (e.g. muted at
+                # 0.0), there's nothing to duck — and "restoring" a ~0 level on
+                # close would just keep it silent, a self-sustaining mute trap
+                # across turns. Leave it untouched.
+                if saved is not None and saved <= self._media.duck_level:
+                    log.info("music_duck_skipped", entity=self._entity,
+                             was=saved, duck=self._media.duck_level)
+                    return
+                self._saved_volume = saved
                 await self._ha.set_volume(self._entity, self._media.duck_level)
                 self._ducked = True
                 log.info("music_ducked", entity=self._entity,
