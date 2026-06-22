@@ -274,6 +274,11 @@ class MediaConfig(_StrictModel):
     on_turn: Literal["duck", "pause"] = "duck"
     # Volume (0..1) the player is ducked to during a turn (on_turn: duck).
     duck_level: float = Field(default=0.25, ge=0.0, le=1.0)
+    # The sendspin-cpp player re-registers at volume 0.0 every time it (re)connects
+    # to Music Assistant, so a reboot/restart leaves it silent. On startup, once the
+    # player reports a volume, if it came up muted we set it to the last-known level
+    # (persisted across runs) — or this default when there's no record.
+    startup_volume: float = Field(default=0.25, ge=0.0, le=1.0)
 
 
 class ArbitrationConfig(_StrictModel):

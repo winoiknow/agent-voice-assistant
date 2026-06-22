@@ -62,6 +62,13 @@ Our build applies one patch (`patches/sendspin-cpp/`) giving the client a **stab
 name-derived id**, so each device is its own MA player. Point
 `media.home_assistant.media_player_entity` at the entity MA assigns it.
 
+The player re-registers at **volume `0.0` (silent) every time it (re)connects** to
+Music Assistant, so a reboot or service restart would otherwise leave music muted.
+On startup we wait for the player to come up and, if it's at `0.0`, restore the
+**last-known listening level** (persisted next to the log file) — falling back to
+`media.startup_volume` (default `0.25`) when there's no record. A player that comes
+up with a real volume is left untouched.
+
 ## Updating & uninstalling
 
 **Update** — just re-run the installer; it's idempotent. It stops the service,

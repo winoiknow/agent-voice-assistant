@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from voiceagent.audio.base import AudioIO
@@ -23,6 +24,11 @@ from voiceagent.media.sendspin import SendspinDaemon
 log = get_logger("media.controller")
 
 HaClientFactory = Callable[[HomeAssistantConfig], Any]
+
+# How long/often to wait for the player to (re)connect to MA before restoring its
+# startup volume. The player advertises at 0.0 on connect; ~60 s covers reconnect.
+_STARTUP_POLL_INTERVAL_S = 2.0
+_STARTUP_POLL_TRIES = 30
 
 
 class MediaController:
@@ -46,6 +52,16 @@ class MediaController:
         self._paused = False
         self._ducked = False
         self._saved_volume: float | None = None
+        self._startup_task: asyncio.Task[None] | None = None
+        # Persist the last-known listening volume next to the log file so we can
+        # restore it after the player boots muted (see _restore_startup_volume).
+        log_file = settings.logging.file
+        state_dir = (
+            Path(log_file).expanduser().parent
+            if log_file
+            else Path.home() / ".local" / "state" / "voiceagent"
+        )
+        self._volume_state_path = state_dir / "last_volume"
 
     @staticmethod
     def _default_ha(cfg: HomeAssistantConfig) -> HomeAssistantClient:
@@ -66,14 +82,75 @@ class MediaController:
         if self._ha_ready():
             self._ha = self._ha_factory(self._media.home_assistant)
             log.info("media_ha_ready", entity=self._entity)
+            # The player boots at volume 0.0 (silent) on every reconnect; restore a
+            # usable level in the background once it comes up.
+            self._startup_task = asyncio.create_task(self._restore_startup_volume())
 
     async def stop(self) -> None:
+        if self._startup_task is not None:
+            self._startup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._startup_task
+            self._startup_task = None
         if self._ha is not None:
             with contextlib.suppress(Exception):
                 await self._ha.aclose()
             self._ha = None
         if self._daemon is not None:
             await self._daemon.stop()
+
+    def _load_last_volume(self) -> float | None:
+        """Read the persisted last-known listening volume, if any (0..1)."""
+        try:
+            v = float(self._volume_state_path.read_text().strip())
+        except Exception:
+            return None
+        return v if 0.0 < v <= 1.0 else None
+
+    def _save_last_volume(self, level: float) -> None:
+        """Persist a genuine listening level so it survives a restart. Best effort."""
+        if not (0.0 < level <= 1.0):
+            return
+        try:
+            self._volume_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._volume_state_path.write_text(f"{level:.4f}")
+        except Exception as exc:
+            log.debug("last_volume_save_failed", error=str(exc))
+
+    async def _restore_startup_volume(self) -> None:
+        """Restore a usable volume after the player (re)connects muted.
+
+        The sendspin-cpp player re-registers at volume 0.0 on every connect, so a
+        reboot/restart leaves it silent. Wait (polling) for the player to report a
+        volume; if it came up at 0.0, set it to the last-known level — or the
+        configured ``startup_volume`` default when there's no record. A player that
+        comes up with a real volume is left untouched.
+        """
+        if self._ha is None or not self._entity:
+            return
+        try:
+            for _ in range(_STARTUP_POLL_TRIES):
+                await asyncio.sleep(_STARTUP_POLL_INTERVAL_S)
+                try:
+                    cur = await self._ha.get_volume(self._entity)
+                except Exception:
+                    continue  # entity still unavailable / HA hiccup — keep waiting
+                if cur is None:
+                    continue
+                if cur > 0.001:
+                    return  # came up with a usable volume; leave it alone
+                target = self._load_last_volume() or self._media.startup_volume
+                source = "last_known" if self._load_last_volume() else "default"
+                if target <= 0.0:
+                    return
+                await self._ha.set_volume(self._entity, target)
+                log.info("startup_volume_restored", entity=self._entity,
+                         to=target, source=source)
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("startup_volume_restore_failed", error=str(exc))
 
     async def on_turn_start(self) -> None:
         """Duck or pause the player when a voice turn begins (only if it's playing)."""
@@ -114,6 +191,7 @@ class MediaController:
                              was=saved, duck=self._media.duck_level)
                     return
                 self._saved_volume = saved
+                self._save_last_volume(saved)  # remember the listening level
                 await self._ha.set_volume(self._entity, self._media.duck_level)
                 self._ducked = True
                 log.info("music_ducked", entity=self._entity,
@@ -161,6 +239,8 @@ class MediaController:
                     restore = cur if changed else self._saved_volume
                     if restore is not None and restore != cur:
                         await self._ha.set_volume(self._entity, restore)
+                    if restore is not None:
+                        self._save_last_volume(restore)  # remember for next boot
                     log.info(
                         "music_unducked", entity=self._entity, to=restore,
                         settled=cur, agent_changed=changed,

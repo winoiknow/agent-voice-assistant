@@ -113,6 +113,9 @@ media:
   on_turn: duck              # duck = lower volume, keep stream (instant resume,
                              #        keeps AEC converged); pause = true pause
   duck_level: 0.25           # player volume (0..1) during a turn when on_turn: duck
+  startup_volume: 0.25       # the player boots muted (0.0) on every reconnect; on
+                             # startup, restore the last-known level — or this when
+                             # there's no record — so music isn't silent after a reboot
   sendspin:                  # sendspin-cpp basic_client (build: scripts/build-sendspin-cpp.sh;
                              # needs the system avahi-daemon for mDNS discovery)
     enabled: false

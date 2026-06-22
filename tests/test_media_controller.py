@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import tempfile
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from voiceagent.audio.mock import MockAudioIO
 from voiceagent.audio.types import AudioFormat
 from voiceagent.config import Settings
 from voiceagent.media import MediaController
+from voiceagent.media import controller as controller_mod
 
 
 class FakeHA:
@@ -46,7 +52,10 @@ def _settings(media_over: dict[str, Any] | None = None, **ha: Any) -> Settings:
     base.update(ha)
     media: dict[str, Any] = {"sendspin": {"enabled": False}, "home_assistant": base}
     media.update(media_over or {})
-    return Settings(audio={"backend": "mock"}, media=media)
+    # Isolate the persisted last-volume file (derived from logging.file's dir) so
+    # tests never touch the real ~/.local/state/voiceagent.
+    log_file = str(Path(tempfile.mkdtemp()) / "voiceagent.log")
+    return Settings(audio={"backend": "mock"}, media=media, logging={"file": log_file})
 
 
 def _controller(settings: Settings, ha: FakeHA) -> MediaController:
@@ -123,6 +132,62 @@ async def test_duck_skipped_when_already_at_or_below_duck_level() -> None:
     await mc.on_turn_end()
     assert ha.calls == []  # nothing restored -> no mute trap
     assert ha.volume == 0.0
+    await mc.stop()
+
+
+def test_last_volume_roundtrip_and_validation() -> None:
+    ha = FakeHA()
+    mc = _controller(_settings(), ha)
+    assert mc._load_last_volume() is None  # nothing persisted yet
+    mc._save_last_volume(0.6)
+    assert mc._load_last_volume() == 0.6
+    mc._save_last_volume(0.0)  # mute is not a "listening level" -> not persisted
+    assert mc._load_last_volume() == 0.6
+    mc._save_last_volume(1.5)  # out of range -> ignored
+    assert mc._load_last_volume() == 0.6
+
+
+async def test_startup_restores_last_known_when_player_boots_muted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(controller_mod, "_STARTUP_POLL_INTERVAL_S", 0.01)
+    ha = FakeHA(playing=False, volume=0.0)  # player came up silent
+    mc = _controller(_settings(media_over={"startup_volume": 0.25}), ha)
+    mc._save_last_volume(0.55)  # a level remembered from a previous run
+    await mc.start()
+    for _ in range(20):  # let the background restore task run
+        await asyncio.sleep(0.01)
+        if ha.volume != 0.0:
+            break
+    assert ha.volume == 0.55  # restored to last-known, not the default
+    await mc.stop()
+
+
+async def test_startup_uses_default_when_no_last_known(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(controller_mod, "_STARTUP_POLL_INTERVAL_S", 0.01)
+    ha = FakeHA(playing=False, volume=0.0)
+    mc = _controller(_settings(media_over={"startup_volume": 0.25}), ha)
+    await mc.start()
+    for _ in range(20):
+        await asyncio.sleep(0.01)
+        if ha.volume != 0.0:
+            break
+    assert ha.volume == 0.25  # no record -> configured default
+    await mc.stop()
+
+
+async def test_startup_leaves_player_with_real_volume_untouched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(controller_mod, "_STARTUP_POLL_INTERVAL_S", 0.01)
+    ha = FakeHA(playing=False, volume=0.7)  # already has a usable volume
+    mc = _controller(_settings(media_over={"startup_volume": 0.25}), ha)
+    await mc.start()
+    await asyncio.sleep(0.1)  # give the task several poll cycles
+    assert ha.volume == 0.7  # untouched
+    assert ha.calls == []
     await mc.stop()
 
 
